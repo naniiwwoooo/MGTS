@@ -10,7 +10,7 @@ import pytest
 
 from frontend import charts
 from frontend import data_loader as dl
-from frontend import llm
+import llm
 
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "frontend" / "app.py"

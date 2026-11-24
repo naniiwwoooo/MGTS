@@ -14,7 +14,7 @@ for path in (str(ROOT), str(Path(__file__).resolve().parent)):
 
 from frontend import charts  # noqa: E402
 from frontend import data_loader as dl  # noqa: E402
-from frontend import llm  # noqa: E402
+import llm  # noqa: E402
 from frontend import style  # noqa: E402
 
 st.set_page_config(
