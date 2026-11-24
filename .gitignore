@@ -227,7 +227,6 @@ __marimo__/
 
 # Данные (реальные данные в репозиторий не кладём)
 data/*.csv
-data/*.xlsx
 data/*.db
 !data/sample/
 
