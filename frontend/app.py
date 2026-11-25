@@ -82,11 +82,10 @@ def render_overview(intern_df, mentor_df) -> None:
         st.caption("Средний профиль компетенций")
         show_chart(charts.team_radar(intern_df))
 
-    style.ai_block(
-        "Общее впечатление от программы",
-        llm.generate_overall_impression(intern_df, mentor_df)
-        + " Здесь появится развёрнутый анализ от LLM, когда подключим модель.",
-    )
+    impression = llm.generate_overall_impression(intern_df, mentor_df)
+    if not llm.llm_available():
+        impression += " Здесь появится развёрнутый анализ от LLM, когда подключим модель."
+    style.ai_block("Общее впечатление от программы", impression)
 
 
 def render_interns(intern_df, mentor_df) -> None:
