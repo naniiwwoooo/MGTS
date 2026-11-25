@@ -136,7 +136,8 @@ def test_chart_functions_return_figures(data):
         assert len(fig.data) >= 1
 
 
-def test_llm_hook(data):
+def test_llm_hook(data, monkeypatch):
+    monkeypatch.setattr("llm.core.llm_available", lambda: False)
     intern_df, mentor_df = data
     context = llm.build_context(intern_df, mentor_df)
     assert "Сводные показатели" in context
@@ -153,24 +154,70 @@ def test_help_sheets_present():
         assert not sheets["Справка"].empty
 
 
-def test_app_boots_without_exceptions():
+@pytest.fixture
+def dashboard(monkeypatch):
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file(str(APP), default_timeout=60)
-    at.run()
-    assert len(at.exception) == 0, [e.value for e in at.exception]
-    assert len(at.tabs) >= 2
-    assert len(at.selectbox) >= 1
+    monkeypatch.setattr(llm, "llm_available", lambda: False)
+    return AppTest.from_file(str(APP), default_timeout=60).run()
 
 
-def test_app_switches_between_interns():
+def test_app_opens_program_overview(dashboard):
+    assert not dashboard.exception
+    navigation = dashboard.radio(key="dashboard_view")
+    assert navigation.value == "Обзор программы"
+    assert len(navigation.options) == 6
+    assert any("<h1>Обзор программы</h1>" in item.value for item in dashboard.markdown)
+    assert not any(item.label == "Предыдущие отзывы" for item in dashboard.expander)
+
+
+def test_app_switches_between_interns_and_overview(dashboard, data):
+    intern_df, mentor_df = data
+    for intern_id in dl.intern_ids(intern_df):
+        dashboard.radio(key="dashboard_view").set_value(intern_id).run()
+        assert not dashboard.exception
+        assert any(f"<h1>Стажёр {intern_id}</h1>" in item.value for item in dashboard.markdown)
+        assert not any(item.label == "Сравнение стажёров" for item in dashboard.expander)
+        history = next(item for item in dashboard.expander if item.label == "Предыдущие отзывы")
+        latest = dl.mentor_comments(mentor_df, intern_id).iloc[-1]
+        assert any(str(latest[dl.COMMENT]) in item.value for item in dashboard.markdown)
+        assert all(str(latest[dl.COMMENT]) not in item.value for item in history.markdown)
+
+    dashboard.radio(key="dashboard_view").set_value("Обзор программы").run()
+    assert not dashboard.exception
+    assert any("<h1>Обзор программы</h1>" in item.value for item in dashboard.markdown)
+
+
+def test_model_runs_only_on_request_and_keeps_results_per_view(monkeypatch):
     from streamlit.testing.v1 import AppTest
 
-    at = AppTest.from_file(str(APP), default_timeout=60)
-    at.run()
-    assert len(at.exception) == 0
+    calls = []
 
-    for intern_id in ["INT-02", "INT-05", "INT-01"]:
-        at.selectbox[0].select(intern_id).run()
-        assert len(at.exception) == 0, [e.value for e in at.exception]
+    def overall(*args):
+        calls.append("overview")
+        return "Вывод по программе"
 
+    def intern(intern_df, mentor_df, intern_id):
+        calls.append(intern_id)
+        return f"Вывод по {intern_id}"
+
+    monkeypatch.setattr(llm, "llm_available", lambda: True)
+    monkeypatch.setattr(llm, "generate_overall_impression", overall)
+    monkeypatch.setattr(llm, "generate_intern_impression", intern)
+    at = AppTest.from_file(str(APP)).run()
+    assert calls == []
+    at.button(key="generate_analysis").click().run()
+    assert calls == ["overview"]
+    assert at.text[0].value == "Вывод по программе"
+
+    at.radio(key="dashboard_view").set_value("INT-02").run()
+    assert calls == ["overview"]
+    assert not at.text
+    at.button(key="generate_analysis").click().run()
+    assert calls == ["overview", "INT-02"]
+    assert at.text[0].value == "Вывод по INT-02"
+
+    at.radio(key="dashboard_view").set_value("Обзор программы").run()
+    assert not at.exception
+    assert calls == ["overview", "INT-02"]
+    assert at.text[0].value == "Вывод по программе"

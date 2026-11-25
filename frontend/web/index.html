@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f5f7">
+  <title>Стажёрская программа · МГТС</title>
+  <link rel="stylesheet" href="/assets/dashboard.css">
+  <script type="module" src="/assets/dashboard.js"></script>
+</head>
+<body>
+  <a class="skip" href="#main">К содержанию</a>
+  <header class="top">
+    <div class="top-inner">
+      <a class="brand" href="/" data-route><strong>МГТС</strong><span>Стажёрская программа</span></a>
+    </div>
+  </header>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Навигация по программе">
+      <nav aria-label="Разделы">
+        <a class="nav-link overview-link" href="/" data-route>Обзор программы</a>
+        <div id="intern-navigation"></div>
+      </nav>
+    </aside>
+    <div class="mobile-navigation">
+      <a class="overview-link" href="/" data-route>← К обзору</a>
+      <label for="mobile-intern">Стажёр</label>
+      <select id="mobile-intern" disabled><option value="">Выберите профиль</option></select>
+    </div>
+    <main id="main" tabindex="-1">
+      <p class="loading" role="status">Загружаем данные программы…</p>
+    </main>
+  </div>
+  <template id="page-template">
+    <div class="page">
+      <header class="page-header">
+        <h1></h1>
+        <p class="page-meta"></p>
+        <a class="directory-jump" href="#intern-directory" hidden>К списку стажёров ↓</a>
+      </header>
+      <section class="metric-grid" aria-label="Ключевые показатели"></section>
+      <div class="page-grid">
+        <section class="panel chart-panel" aria-labelledby="chart-heading">
+          <h2 id="chart-heading">Удовлетворённость по месяцам</h2>
+          <p class="chart-caption">Оценки по шкале 1–5</p>
+          <div class="chart" aria-hidden="true"></div>
+        </section>
+        <div class="insights">
+          <section class="panel analysis-panel" aria-labelledby="analysis-heading">
+            <h2 id="analysis-heading"></h2>
+            <p class="analysis-period"></p>
+            <div class="analysis-output" aria-live="polite"></div>
+            <button class="analysis-action" type="button" hidden>Сформировать вывод</button>
+          </section>
+
+        </div>
+      </div>
+      <section class="panel directory" id="intern-directory" tabindex="-1" aria-labelledby="directory-heading" hidden>
+        <h2 id="directory-heading">Стажёры</h2>
+        <p>Последние оценки по каждому стажёру</p>
+        <div class="directory-list"></div>
+      </section>
+      <section class="panel feedback" aria-labelledby="feedback-heading" hidden>
+        <h2 id="feedback-heading">Отзывы наставников</h2>
+        <div class="comment-list"></div>
+      </section>
+      <section class="chart-section" aria-labelledby="chart-section-heading">
+        <h2 id="chart-section-heading"></h2>
+        <div class="chart-grid"></div>
+      </section>
+      <section class="panel monthly" aria-labelledby="monthly-heading">
+        <h2 id="monthly-heading">Все показатели по месяцам</h2>
+        <p class="chart-caption">Прочерк означает, что оценки за этот месяц нет.</p>
+        <div class="table-scroll"></div>
+      </section>
+    </div>
+  </template>
+</body>
+</html>

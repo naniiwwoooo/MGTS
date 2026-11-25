@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from html import escape
+
 import streamlit as st
 
 CSS = """
@@ -34,43 +36,54 @@ header[data-testid="stHeader"] { background: transparent; }
     max-width: 1180px;
 }
 
-/* Hero */
-.hero { text-align: center; padding: 1rem 0 2.6rem; }
-.hero-eyebrow {
-    color: var(--apple-blue);
-    font-size: 0.78rem;
-    font-weight: 600;
-    letter-spacing: 0.09em;
-    text-transform: uppercase;
+/* Navigation and headings */
+.st-key-dashboard_navigation {
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid #e8e8ed;
 }
-.hero-title {
-    font-size: clamp(2.5rem, 6vw, 4rem);
+.st-key-dashboard_navigation [role="radiogroup"] {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+.st-key-dashboard_navigation [role="radiogroup"] label {
+    min-height: 44px;
+    margin: 0;
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    background: var(--surface);
+}
+.st-key-dashboard_navigation label:has(input:checked) {
+    background: #e9f2ff;
+    box-shadow: inset 0 0 0 1px #accfff;
+}
+.st-key-dashboard_navigation label:focus-within {
+    outline: 2px solid var(--apple-blue);
+    outline-offset: 2px;
+}
+.page-heading {
+    padding: clamp(1.2rem, 4vw, 2.5rem);
+    border-radius: 24px;
+    background: linear-gradient(120deg, #f5f5f7, #edf4ff);
+}
+.page-heading h1 {
+    padding: 0;
+    margin: 0 0 0.45rem;
+    font-size: clamp(2rem, 5vw, 3.5rem);
     font-weight: 700;
-    letter-spacing: -0.035em;
-    line-height: 1.05;
-    margin: 0.5rem 0 0.7rem;
+    letter-spacing: -0.045em;
+    line-height: 1.06;
 }
-.hero-sub {
-    color: var(--muted);
-    font-size: 1.12rem;
-    line-height: 1.5;
-    max-width: 640px;
-    margin: 0 auto;
-}
-
-/* Sections */
-.section { margin-top: 2.9rem; }
-.section-title {
-    font-size: 1.6rem;
+.page-heading p { color: var(--muted); margin: 0; }
+.section {
+    font-size: clamp(1.35rem, 3vw, 1.75rem);
     font-weight: 700;
-    letter-spacing: -0.02em;
-    margin: 0 0 0.15rem;
+    letter-spacing: -0.025em;
+    margin: 0.8rem 0 0;
+    padding: 0;
 }
-.section-sub {
-    color: var(--muted);
-    font-size: 0.95rem;
-    margin: 0 0 1rem;
-}
+[data-testid="stExpander"] summary { min-height: 44px; font-weight: 600; }
+[data-testid="stText"] { font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* KPI cards */
 .kpi-grid {
@@ -83,11 +96,6 @@ header[data-testid="stHeader"] { background: transparent; }
     background: var(--surface);
     border-radius: 22px;
     padding: 22px 24px;
-    transition: transform 0.25s ease, box-shadow 0.25s ease;
-}
-.kpi-card:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.07);
 }
 .kpi-label { color: var(--muted); font-size: 0.84rem; font-weight: 500; }
 .kpi-value {
@@ -109,6 +117,7 @@ header[data-testid="stHeader"] { background: transparent; }
 .comment-head {
     display: flex;
     justify-content: space-between;
+    flex-wrap: wrap;
     align-items: center;
     gap: 12px;
     margin-bottom: 0.55rem;
@@ -128,58 +137,13 @@ header[data-testid="stHeader"] { background: transparent; }
 }
 .pill-green { background: rgba(52, 199, 89, 0.14); color: #248a3d; }
 
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 6px;
-    border-bottom: 1px solid var(--line);
+@media (max-width: 580px) {
+    .block-container { padding-inline: 1rem; }
+    .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .kpi-card { padding: 14px 12px; border-radius: 16px; }
+    .kpi-value { font-size: 1.5rem; }
+    .comment-card { padding: 16px; }
 }
-.stTabs [data-baseweb="tab"] {
-    height: 46px;
-    padding: 0 20px;
-    background: transparent;
-    font-weight: 600;
-    font-size: 0.98rem;
-    color: var(--muted);
-}
-.stTabs [aria-selected="true"] { color: var(--ink); }
-.stTabs [data-baseweb="tab-highlight"] { background: var(--apple-blue); }
-
-/* AI block */
-.ai-card {
-    background: linear-gradient(135deg, #f5f5f7 0%, #eef4ff 100%);
-    border-radius: 24px;
-    padding: 26px 28px;
-    margin-top: 2.4rem;
-}
-.ai-title {
-    font-size: 1.25rem;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    margin-bottom: 0.4rem;
-}
-.ai-text { color: var(--muted); font-size: 0.96rem; line-height: 1.5; max-width: 680px; }
-.ai-badge {
-    display: inline-block;
-    background: rgba(0, 113, 227, 0.12);
-    color: var(--apple-blue);
-    border-radius: 999px;
-    padding: 3px 11px;
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    margin-bottom: 0.7rem;
-}
-
-/* Selectbox */
-div[data-baseweb="select"] > div {
-    border-radius: 14px;
-    border-color: var(--line);
-    background: var(--surface-2);
-}
-
-/* Metric widget fallback */
-[data-testid="stMetricValue"] { font-weight: 700; letter-spacing: -0.02em; }
 </style>
 """
 
@@ -188,36 +152,26 @@ def inject_css() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
 
 
-def hero(eyebrow: str, title: str, subtitle: str) -> None:
+def heading(title: str, subtitle: str) -> None:
     st.markdown(
-        f"""
-        <div class="hero">
-            <div class="hero-eyebrow">{eyebrow}</div>
-            <h1 class="hero-title">{title}</h1>
-            <p class="hero-sub">{subtitle}</p>
-        </div>
-        """,
+        f'<div class="page-heading"><h1>{escape(title)}</h1><p>{escape(subtitle)}</p></div>',
         unsafe_allow_html=True,
     )
 
 
-def section(title: str, subtitle: str | None = None) -> None:
-    sub = f'<p class="section-sub">{subtitle}</p>' if subtitle else ""
-    st.markdown(
-        f'<div class="section"><div class="section-title">{title}</div>{sub}</div>',
-        unsafe_allow_html=True,
-    )
+def section(title: str) -> None:
+    st.markdown(f'<h2 class="section">{escape(title)}</h2>', unsafe_allow_html=True)
 
 
 def kpi_grid(cards: list[dict[str, str]]) -> None:
     """cards: список словарей с ключами label, value, sub (sub опционален)."""
     items = []
     for card in cards:
-        sub = f'<div class="kpi-sub">{card["sub"]}</div>' if card.get("sub") else ""
+        sub = f'<div class="kpi-sub">{escape(card["sub"])}</div>' if card.get("sub") else ""
         items.append(
             f'<div class="kpi-card">'
-            f'<div class="kpi-label">{card["label"]}</div>'
-            f'<div class="kpi-value">{card["value"]}</div>'
+            f'<div class="kpi-label">{escape(card["label"])}</div>'
+            f'<div class="kpi-value">{escape(card["value"])}</div>'
             f'{sub}</div>'
         )
     st.markdown(f'<div class="kpi-grid">{"".join(items)}</div>', unsafe_allow_html=True)
@@ -230,27 +184,14 @@ def comment_card(month: int, mentor_id: str, comment: str, progress: float, read
             <div class="comment-head">
                 <div>
                     <div class="comment-month">Месяц {month}</div>
-                    <div class="comment-meta">Наставник {mentor_id}</div>
+                    <div class="comment-meta">Наставник {escape(str(mentor_id))}</div>
                 </div>
                 <div>
                     <span class="pill">Прогресс {progress:g}/5</span>
                     <span class="pill pill-green">Готовность {readiness:g}/10</span>
                 </div>
             </div>
-            <div class="comment-text">«{comment}»</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def ai_block(title: str, text: str, badge: str = "Скоро") -> None:
-    st.markdown(
-        f"""
-        <div class="ai-card">
-            <div class="ai-badge">{badge}</div>
-            <div class="ai-title">{title}</div>
-            <div class="ai-text">{text}</div>
+            <div class="comment-text">«{escape(str(comment))}»</div>
         </div>
         """,
         unsafe_allow_html=True,

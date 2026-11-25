@@ -49,13 +49,13 @@ def satisfaction_trend(intern_df: pd.DataFrame, mentor_df: pd.DataFrame) -> go.F
     fig.add_trace(
         go.Scatter(
             x=intern[dl.MONTH], y=intern["Стажёры"], name="Стажёры", mode="lines+markers",
-            line=dict(width=3, color=PALETTE[0], shape="spline"), marker=dict(size=8),
+            line=dict(width=3, color=PALETTE[0], shape="linear"), marker=dict(size=8),
         )
     )
     fig.add_trace(
         go.Scatter(
             x=mentor[dl.MONTH], y=mentor["Наставники"], name="Наставники", mode="lines+markers",
-            line=dict(width=3, color=PALETTE[1], shape="spline"), marker=dict(size=8),
+            line=dict(width=3, color=PALETTE[1], shape="linear"), marker=dict(size=8),
         )
     )
     fig.update_yaxes(range=[1, 5], dtick=1)
@@ -74,14 +74,14 @@ def progress_trend(intern_df: pd.DataFrame, mentor_df: pd.DataFrame) -> go.Figur
     fig.add_trace(
         go.Scatter(
             x=self_progress[dl.MONTH], y=self_progress["Самооценка стажёра"], name="Самооценка стажёра",
-            mode="lines+markers", line=dict(width=3, color=PALETTE[3], shape="spline"), marker=dict(size=8),
+            mode="lines+markers", line=dict(width=3, color=PALETTE[3], shape="linear"), marker=dict(size=8),
             fill="tozeroy", fillcolor="rgba(175,82,222,0.08)",
         )
     )
     fig.add_trace(
         go.Scatter(
             x=mentor_view[dl.MONTH], y=mentor_view["Оценка наставника"], name="Оценка наставника",
-            mode="lines+markers", line=dict(width=3, color=PALETTE[2], shape="spline"), marker=dict(size=8),
+            mode="lines+markers", line=dict(width=3, color=PALETTE[2], shape="linear"), marker=dict(size=8),
         )
     )
     fig.update_yaxes(range=[1, 5], dtick=1)
@@ -94,7 +94,7 @@ def nps_trend(intern_df: pd.DataFrame) -> go.Figure:
     fig = go.Figure(
         go.Bar(
             x=data[dl.MONTH], y=data[dl.NPS], marker_color=PALETTE[0],
-            marker_line_width=0, width=0.5, name="NPS",
+            marker_line_width=0, width=0.5, name="Рекомендация",
         )
     )
     fig.update_yaxes(range=[0, 10], dtick=2)
@@ -107,7 +107,7 @@ def hire_readiness_trend(mentor_df: pd.DataFrame) -> go.Figure:
     fig = go.Figure(
         go.Scatter(
             x=data[dl.MONTH], y=data[dl.HIRE_READINESS], mode="lines+markers",
-            line=dict(width=3, color=PALETTE[1], shape="spline"), marker=dict(size=8),
+            line=dict(width=3, color=PALETTE[1], shape="linear"), marker=dict(size=8),
             fill="tozeroy", fillcolor="rgba(52,199,89,0.10)", name="Готовность к найму",
         )
     )
@@ -180,14 +180,16 @@ def team_radar(intern_df: pd.DataFrame) -> go.Figure:
     return _theme(fig, height=360, show_legend=False)
 
 
-def intern_timeline_chart(timeline: pd.DataFrame) -> go.Figure:
+def intern_timeline_chart(
+    timeline: pd.DataFrame, metrics: list[str] | None = None,
+) -> go.Figure:
     fig = go.Figure()
-    for i, metric in enumerate(dl.INTERN_METRICS):
+    for i, metric in enumerate(metrics if metrics is not None else dl.INTERN_METRICS):
         fig.add_trace(
             go.Scatter(
                 x=timeline[dl.MONTH], y=timeline[metric], name=metric,
                 mode="lines+markers",
-                line=dict(width=2.5, color=PALETTE[i % len(PALETTE)], shape="spline"),
+                line=dict(width=2.5, color=PALETTE[i % len(PALETTE)], shape="linear"),
                 marker=dict(size=7),
             )
         )
@@ -235,18 +237,30 @@ def intern_radar(intern_df: pd.DataFrame, intern_id: str) -> go.Figure:
     return _theme(fig, height=380)
 
 
+def mentor_progress_trend(mentor_df: pd.DataFrame) -> go.Figure:
+    data = dl.monthly_mean(mentor_df, ["Прогресс стажёра"])
+    fig = go.Figure(go.Scatter(
+        x=data[dl.MONTH], y=data["Прогресс стажёра"], mode="lines+markers",
+        line=dict(width=3, color=ACCENT), marker=dict(size=8),
+        name="Прогресс",
+    ))
+    fig.update_xaxes(dtick=1, title="Месяц")
+    fig.update_yaxes(range=[1, 5], dtick=1)
+    return _theme(fig, show_legend=False)
+
+
 def intern_mentor_progress(mentor_timeline: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
             x=mentor_timeline[dl.MONTH], y=mentor_timeline["Прогресс стажёра"], name="Прогресс стажёра",
-            mode="lines+markers", line=dict(width=3, color=PALETTE[2], shape="spline"), marker=dict(size=8),
+            mode="lines+markers", line=dict(width=3, color=PALETTE[2], shape="linear"), marker=dict(size=8),
         )
     )
     fig.add_trace(
         go.Scatter(
             x=mentor_timeline[dl.MONTH], y=mentor_timeline[dl.HIRE_READINESS], name="Готовность к найму",
-            mode="lines+markers", line=dict(width=3, color=PALETTE[1], shape="spline", dash="dot"),
+            mode="lines+markers", line=dict(width=3, color=PALETTE[1], shape="linear", dash="dot"),
             marker=dict(size=8), yaxis="y2",
         )
     )

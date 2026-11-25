@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from frontend import data_loader as dl  # noqa: E402
+from backend import surveys as dl  # noqa: E402
 
 DEFAULT_PROMPT_HEADER = (
     "Ты — аналитик HR-данных. На основе результатов опросов стажёров и "
@@ -181,14 +181,19 @@ def build_intern_prompt(
     return f"{INTERN_PROMPT_HEADER}\n\n{build_intern_context(intern_df, mentor_df, intern_id)}"
 
 
-def _ssl_context() -> ssl.SSLContext:
-    """Контекст без проверки сертификата.
+GIGACHAT_ROOT_CA = Path(__file__).with_name("gigachat-root-ca.crt")
+GIGACHAT_HOSTS = {"api.giga.chat", "ngw.devices.sberbank.ru", "gigachat.devices.sberbank.ru"}
 
-    GigaChat использует сертификаты НУЦ Минцифры, которых обычно нет в
-    системном хранилище. Для локального запуска проверку отключаем
-    (аналогично ``verify_ssl_certs=False`` в официальном SDK).
-    """
-    return ssl._create_unverified_context()
+
+def _ssl_context(url: str) -> ssl.SSLContext:
+    """Добавляет CA Минцифры только к HTTPS-соединениям с GigaChat."""
+    context = ssl.create_default_context()
+    ca_file = os.getenv("LLM_CA_FILE")
+    if ca_file:
+        context.load_verify_locations(cafile=ca_file)
+    elif urllib.parse.urlsplit(url).hostname in GIGACHAT_HOSTS:
+        context.load_verify_locations(cafile=GIGACHAT_ROOT_CA)
+    return context
 
 
 def _gigachat_token(auth_key: str, auth_url: str, scope: str, timeout: int) -> str:
@@ -209,7 +214,7 @@ def _gigachat_token(auth_key: str, auth_url: str, scope: str, timeout: int) -> s
     req = urllib.request.Request(auth_url, data=data, headers=headers, method="POST")
 
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context(req.full_url)) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -240,7 +245,7 @@ def _gigachat_models(base_url: str, token: str, timeout: int) -> list[str]:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context(req.full_url)) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.HTTPError, urllib.error.URLError):
         return []
@@ -279,7 +284,7 @@ def _gigachat_chat_raw(
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context(req.full_url)) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -372,7 +377,7 @@ def _call_openai_compatible(prompt: str, model: str | None, timeout: int) -> str
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context(req.full_url)) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
