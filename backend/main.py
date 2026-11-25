@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Annotated
 
 import plotly
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -19,11 +20,22 @@ PLOTLY = Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
 def get_snapshot() -> dashboard.Snapshot:
     try:
         return dashboard.read_snapshot(dashboard.current_version())
+    except surveys.SurveyDataError as exc:
+        raise HTTPException(503, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(503, "Не удалось прочитать файлы опросов.") from exc
+        raise HTTPException(503, "Не удалось прочитать файлы опросов. Проверьте Excel-файлы в папке data.") from exc
 
 
 Snapshot = Annotated[dashboard.Snapshot, Depends(get_snapshot)]
+
+
+def analysis_snapshot(snapshot: Snapshot, version: str | None = None) -> dashboard.Snapshot:
+    if version is not None and version != snapshot.data_version:
+        raise HTTPException(409, "Опросы обновились. Загрузите актуальные данные.")
+    return snapshot
+
+
+AnalysisSnapshot = Annotated[dashboard.Snapshot, Depends(analysis_snapshot)]
 
 
 def require_intern(snapshot: dashboard.Snapshot, intern_id: str) -> None:
@@ -33,12 +45,14 @@ def require_intern(snapshot: dashboard.Snapshot, intern_id: str) -> None:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="МГТС · Стажёрская программа")
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
     analysis = AnalysisService()
+    plotly_assets = StaticFiles(directory=PLOTLY.parent)
     app.mount("/assets", StaticFiles(directory=WEB / "assets"), name="assets")
 
     @app.get("/assets-vendor/plotly.js", include_in_schema=False)
-    def plotly_script():
-        return FileResponse(PLOTLY, media_type="text/javascript")
+    async def plotly_script(request: Request):
+        return await plotly_assets.get_response(PLOTLY.name, request.scope)
 
     @app.get("/", include_in_schema=False)
     @app.get("/interns/{intern_id}", include_in_schema=False)
@@ -55,20 +69,20 @@ def create_app() -> FastAPI:
         return dashboard.profile(snapshot, intern_id)
 
     @app.get("/api/analysis/overview")
-    async def overview_analysis(snapshot: Snapshot) -> Analysis:
+    async def overview_analysis(snapshot: AnalysisSnapshot) -> Analysis:
         return analysis.status(snapshot, None)
 
     @app.post("/api/analysis/overview", status_code=202)
-    async def analyze_overview(snapshot: Snapshot, refresh: bool = True) -> Analysis:
+    async def analyze_overview(snapshot: AnalysisSnapshot, refresh: bool = True) -> Analysis:
         return analysis.start(snapshot, None, refresh)
 
     @app.get("/api/interns/{intern_id}/analysis")
-    async def profile_analysis(snapshot: Snapshot, intern_id: str) -> Analysis:
+    async def profile_analysis(snapshot: AnalysisSnapshot, intern_id: str) -> Analysis:
         require_intern(snapshot, intern_id)
         return analysis.status(snapshot, intern_id)
 
     @app.post("/api/interns/{intern_id}/analysis", status_code=202)
-    async def analyze_profile(snapshot: Snapshot, intern_id: str, refresh: bool = True) -> Analysis:
+    async def analyze_profile(snapshot: AnalysisSnapshot, intern_id: str, refresh: bool = True) -> Analysis:
         require_intern(snapshot, intern_id)
         return analysis.start(snapshot, intern_id, refresh)
 

@@ -36,24 +36,37 @@
       <header class="page-header">
         <h1></h1>
         <p class="page-meta"></p>
-        <a class="directory-jump" href="#intern-directory" hidden>К списку стажёров ↓</a>
+        <nav class="page-jumps" aria-label="На этой странице">
+          <a class="directory-jump" href="#intern-directory" hidden>К списку стажёров ↓</a>
+          <a href="#monthly">К таблице оценок ↓</a>
+        </nav>
       </header>
-      <section class="metric-grid" aria-label="Ключевые показатели"></section>
+      <div>
+        <section class="metric-grid" aria-label="Ключевые показатели"></section>
+        <p class="rating-guide">Цвет показывает долю от максимального балла: красный — ниже 60%, янтарный — от 60% до 80% не включительно, зелёный — от 80%.</p>
+      </div>
       <div class="page-grid">
-        <section class="panel chart-panel" aria-labelledby="chart-heading">
-          <h2 id="chart-heading">Удовлетворённость по месяцам</h2>
-          <p class="chart-caption">Оценки по шкале 1–5</p>
-          <div class="chart" aria-hidden="true"></div>
-        </section>
         <div class="insights">
           <section class="panel analysis-panel" aria-labelledby="analysis-heading">
             <h2 id="analysis-heading"></h2>
             <p class="analysis-period"></p>
             <div class="analysis-output" aria-live="polite"></div>
             <button class="analysis-action" type="button" hidden>Сформировать вывод</button>
+            <div class="analysis-evidence">
+              <h3>Данные для вывода</h3>
+              <ul></ul>
+            </div>
           </section>
-
+          <section class="panel fresh-feedback" hidden>
+            <h2>Последний отзыв наставника</h2>
+          </section>
         </div>
+        <section class="panel chart-panel" aria-labelledby="chart-heading" aria-describedby="chart-summary">
+          <h2 id="chart-heading">Удовлетворённость по месяцам</h2>
+          <p class="chart-caption" id="chart-summary">Оценки по шкале 1–5</p>
+          <a class="chart-table-link" href="#monthly">Значения графика в таблице</a>
+          <div class="chart" aria-hidden="true"></div>
+        </section>
       </div>
       <section class="panel directory" id="intern-directory" tabindex="-1" aria-labelledby="directory-heading" hidden>
         <h2 id="directory-heading">Стажёры</h2>
@@ -61,17 +74,20 @@
         <div class="directory-list"></div>
       </section>
       <section class="panel feedback" aria-labelledby="feedback-heading" hidden>
-        <h2 id="feedback-heading">Отзывы наставников</h2>
-        <div class="comment-list"></div>
+        <h2 id="feedback-heading">Комментарии по месяцам</h2>
+        <div class="feedback-columns">
+          <div><h3>Стажёр</h3><div class="comment-list intern-comments"></div></div>
+          <div><h3>Наставники</h3><div class="comment-list mentor-comments"></div></div>
+        </div>
       </section>
       <section class="chart-section" aria-labelledby="chart-section-heading">
         <h2 id="chart-section-heading"></h2>
         <div class="chart-grid"></div>
       </section>
-      <section class="panel monthly" aria-labelledby="monthly-heading">
+      <section class="panel monthly" id="monthly" tabindex="-1" aria-labelledby="monthly-heading">
         <h2 id="monthly-heading">Все показатели по месяцам</h2>
         <p class="chart-caption">Прочерк означает, что оценки за этот месяц нет.</p>
-        <div class="table-scroll"></div>
+        <div class="table-scroll" role="region" aria-label="Помесячная таблица оценок" tabindex="0"></div>
       </section>
     </div>
   </template>

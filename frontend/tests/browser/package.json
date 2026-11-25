@@ -1,0 +1,12 @@
+{
+  "name": "mgts-dashboard-browser-tests",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test dashboard.test.cjs"
+  },
+  "devDependencies": {
+    "axe-core": "^4.10.3",
+    "playwright": "1.65.1"
+  }
+}

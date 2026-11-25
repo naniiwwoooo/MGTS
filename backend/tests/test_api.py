@@ -1,10 +1,11 @@
 """API, совместимость расчётов и сценарии ИИ без внешних запросов."""
 
 import asyncio
-from threading import Event
 import ssl
+from threading import Event
 
 import httpx
+import pandas as pd
 import pytest
 
 import llm
@@ -54,6 +55,26 @@ def test_html_assets_and_deep_links(run):
     execute(scenario)
 
 
+def test_plotly_is_compressed_and_supports_cache_validation(run):
+    _, execute = run
+
+    async def scenario(client):
+        path = "/assets-vendor/plotly.js"
+        async with client.stream("GET", path, headers={"Accept-Encoding": "gzip"}) as response:
+            assert response.status_code == 200
+            assert response.headers["content-encoding"] == "gzip"
+            assert "accept-encoding" in response.headers["vary"].lower()
+            etag = response.headers["etag"]
+            compressed_size = sum([len(chunk) async for chunk in response.aiter_raw()])
+        identity = await client.get(path, headers={"Accept-Encoding": "identity"})
+        assert compressed_size < len(identity.content) * 0.6
+        cached = await client.get(path, headers={"If-None-Match": etag})
+        assert cached.status_code == 304
+        assert not cached.content
+
+    execute(scenario)
+
+
 def test_overview_matches_existing_calculations_and_all_profiles(run):
     _, execute = run
     interns, mentors = surveys.load_all()
@@ -62,6 +83,11 @@ def test_overview_matches_existing_calculations_and_all_profiles(run):
     async def scenario(client):
         overview = (await client.get("/api/overview")).json()
         assert overview["response_count"] == totals["responses"]
+        assert overview["intern_responses"] == overview["mentor_responses"] == 30
+        progress = overview["metrics"][1]["change"]
+        assert progress["first"] == {"month": 1, "value": 1.4, "responses": 5}
+        assert progress["latest"] == {"month": 6, "value": 4.2, "responses": 5}
+        assert {"materials", "support"} <= {chart["id"] for chart in overview["charts"]}
         assert [item["value"] for item in overview["metrics"]] == [
             totals[key] for key in ("intern_satisfaction", "avg_progress", "hire_readiness")
         ]
@@ -70,6 +96,9 @@ def test_overview_matches_existing_calculations_and_all_profiles(run):
         for row in overview["interns"]:
             profile = (await client.get(f"/api/interns/{row['id']}")).json()
             assert profile["id"] == row["id"]
+            assert profile["data_version"] == overview["data_version"]
+            assert row["progress"] == profile["mentor_progress"]
+            assert {item["month"] for item in profile["intern_comments"]} == set(range(1, 7))
             assert profile["month"] == row["month"]
             assert profile["metrics"][0]["value"] == row["satisfaction"]
             assert profile["metrics"][-1]["value"] == row["readiness"]
@@ -94,6 +123,7 @@ def test_profile_handles_missing_month_and_mentor_feedback(run):
         assert response.status_code == 200
         profile = response.json()
         assert profile["metrics"][0]["value"] is None
+        assert profile["metrics"][0]["change"]["latest"]["month"] == 5
         assert profile["metrics"][-1]["month"] is None
         assert profile["comments"] == []
         assert profile["charts"][0]["series"][0]["points"][1] == {"month": 2, "value": None}
@@ -109,7 +139,7 @@ def test_analysis_deduplicates_requests_and_keeps_results_per_scope(run, monkeyp
     def provider(prompt):
         calls.append(prompt)
         assert gate.wait(3)
-        return "Вывод по стажёру" if "Стажёр: INT-02" in prompt else "Вывод по программе"
+        return "Вывод по стажёру" if "Показатели одного стажёра" in prompt else "Вывод по программе"
 
     monkeypatch.setattr(llm, "llm_available", lambda: True)
     monkeypatch.setattr(llm, "_call_model", provider)
@@ -124,6 +154,7 @@ def test_analysis_deduplicates_requests_and_keeps_results_per_scope(run, monkeyp
             assert (await client.post(overview + "?refresh=false")).json()["status"] == "running"
             assert (await client.get(overview)).json()["status"] == "running"
             assert (await client.post(profile)).status_code == 202
+            assert len(calls) <= 1
         finally:
             gate.set()
         assert (await wait_for_result(client, overview))["text"] == "Вывод по программе"
@@ -132,9 +163,11 @@ def test_analysis_deduplicates_requests_and_keeps_results_per_scope(run, monkeyp
         assert cached["status"] == "ready"
         assert cached["text"] == "Вывод по программе"
         assert len(calls) == 2
-        assert all("HR-эксперт" in prompt and "до 100 слов" in prompt and "Не задавай вопросов" in prompt for prompt in calls)
-        assert any("Сводные показатели" in prompt for prompt in calls)
-        assert any("Комментарии наставников" in prompt and "Стажёр: INT-02" in prompt for prompt in calls)
+        assert all("HR-эксперт" in prompt and "без вопросов" in prompt and "Не повторяй числа" in prompt for prompt in calls)
+        assert any("Сводные показатели" in prompt and "месяц 6: 4.20/5, ответов: 5" in prompt for prompt in calls)
+        assert any("Показатели одного стажёра" in prompt and "Прогресс в обучении · Оценка наставников" in prompt
+                   for prompt in calls)
+        assert all("INT-02" not in prompt and "Комментарии наставников" not in prompt for prompt in calls)
         assert (await client.get("/api/interns/INT-03/analysis")).json()["status"] == "available"
         monkeypatch.setenv("LLM_MODEL", "updated-model")
         assert (await client.get(overview)).json()["status"] == "available"
@@ -168,8 +201,11 @@ def test_analysis_failure_can_be_retried_and_snapshot_changes_invalidate_cache(r
         assert (await client.get("/api/overview")).status_code == 200
         await client.post(path + "?refresh=false")
         assert (await wait_for_result(client, path))["text"] == "Готовый вывод"
+        old = (await client.get("/api/overview")).json()["data_version"]
         version = ("changed",)
         assert (await client.get(path)).json()["status"] == "available"
+        assert (await client.get(path, params={"version": old})).status_code == 409
+        assert (await client.post(path, params={"version": old})).status_code == 409
 
     execute(scenario)
 
@@ -200,14 +236,14 @@ def test_gigachat_ca_is_scoped_to_provider(monkeypatch):
     )
 
 
-def test_analysis_rewrites_questions_before_publishing(run, monkeypatch):
+def test_analysis_rewrites_questions_and_numbers_before_publishing(run, monkeypatch):
     _, execute = run
     prompts = []
     responses = iter([
         "Прогресс вырос. Что обсудить на следующей встрече?",
-        "За шесть месяцев оценка прогресса выросла с 2 до 4 из 5.",
-        "Оценка изменилась. В чём причина?",
-        "Что это означает?",
+        "Оценка прогресса наставниками выросла за период.",
+        "Оценка выросла вдвое благодаря усилиям команды.",
+        "Итоговый результат равен 10.",
     ])
 
     def provider(prompt):
@@ -222,14 +258,54 @@ def test_analysis_rewrites_questions_before_publishing(run, monkeypatch):
         await client.post(path)
         result = await wait_for_result(client, path)
         assert result["status"] == "ready"
-        assert result["text"] == "За шесть месяцев оценка прогресса выросла с 2 до 4 из 5."
-        assert prompts[1].endswith(prompts[0])
-        assert "только утверждения" in prompts[1]
+        assert result["text"] == "Оценка прогресса наставниками выросла за период."
+        assert "Опиши только указанные изменения" in prompts[1]
+        assert "рост между первой и последней оценками" in prompts[1]
+        assert "4.20" not in prompts[1]
 
         await client.post(path)
         result = await wait_for_result(client, path)
         assert result["status"] == "error"
-        assert result["text"] == "За шесть месяцев оценка прогресса выросла с 2 до 4 из 5."
+        assert result["text"] == "Оценка прогресса наставниками выросла за период."
         assert len(prompts) == 4
 
     execute(scenario)
+
+
+@pytest.mark.parametrize(("column", "value", "message"), [
+    (surveys.MONTH, 1.5, "целым числом"),
+    (surveys.MONTH, 7, "от 1 до 6"),
+    (surveys.INTERN_ID, "", "Заполните колонку"),
+    ("Удовлетворённость", 9, "Проверьте значение"),
+])
+def test_workbook_validation_reports_row(monkeypatch, column, value, message):
+    data = surveys.load_intern_data()
+    data[column] = data[column].astype(object)
+    data.loc[0, column] = value
+    monkeypatch.setattr(surveys, "load_excel", lambda *args, **kwargs: data)
+    with pytest.raises(surveys.SurveyDataError, match=f"строка 2.*{message}"):
+        surveys.load_intern_data()
+
+
+def test_workbooks_reject_duplicate_rows_and_orphan_mentor_records(monkeypatch):
+    interns, mentors = surveys.load_all()
+    duplicate = pd.concat([interns, interns.iloc[[0]]], ignore_index=True)
+    with monkeypatch.context() as patch:
+        patch.setattr(surveys, "load_excel", lambda *args, **kwargs: duplicate)
+        with pytest.raises(surveys.SurveyDataError, match="повторная строка"):
+            surveys.load_intern_data()
+    mentors.loc[0, surveys.INTERN_ID] = "UNKNOWN"
+    monkeypatch.setattr(surveys, "load_mentor_data", lambda: mentors)
+    with pytest.raises(surveys.SurveyDataError, match="которых нет"):
+        surveys.load_all()
+
+
+def test_overview_keeps_months_seen_only_in_mentor_survey():
+    interns, mentors = surveys.load_all()
+    shortened = interns.loc[interns[surveys.MONTH] < 6]
+    result = dashboard.overview(dashboard.Snapshot(("test",), shortened, mentors))
+    assert result.last_month == 6
+    assert result.metrics[0].change.latest.month == 5
+    assert result.metrics[1].change.latest.month == 6
+    assert result.charts[0].series[0].points[-1].value is None
+    assert result.charts[0].series[1].points[-1].value == 4.8

@@ -235,3 +235,6 @@ data/*.db
 Thumbs.db
 .idea/
 .vscode/
+
+# Local browser-test dependencies
+/frontend/tests/browser/node_modules/

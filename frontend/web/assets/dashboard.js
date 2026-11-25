@@ -2,10 +2,12 @@ const main = document.querySelector("main");
 const directoryNav = document.querySelector("#intern-navigation");
 const mobileIntern = document.querySelector("#mobile-intern");
 const template = document.querySelector("#page-template");
+const plurals = new Intl.PluralRules("ru-RU");
 const format = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 });
 const dateFormat = new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" });
 let routeController;
 let plotlyLoading;
+let activePath;
 let navIds = [];
 
 function element(tag, text, className) {
@@ -61,7 +63,9 @@ async function request(url, signal, method = "GET") {
   const response = await fetch(url, { signal, method, cache: "no-store" });
   if (!response.ok) {
     const { detail } = await response.json().catch(() => ({}));
-    throw new Error(typeof detail === "string" ? detail : "Не удалось загрузить данные.");
+    const error = new Error(typeof detail === "string" ? detail : "Не удалось загрузить данные.");
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -87,20 +91,33 @@ function renderNavigation(interns, id) {
   markNavigation(id);
 }
 
+function responseLabel(count) {
+  const noun = { one: "ответ", few: "ответа", many: "ответов" }[plurals.select(count)] || "ответов";
+  return count + " " + noun;
+}
+
+function changeLabel(change) {
+  if (!change || change.first.month === change.latest.month) return "Нет данных для сравнения";
+  const { first, latest } = change;
+  return format.format(first.value) + " → " + format.format(latest.value) +
+    " · мес. " + first.month + "–" + latest.month;
+}
+
 function renderMetrics(page, metrics, isProfile) {
   const grid = page.querySelector(".metric-grid");
   grid.classList.toggle("profile-metrics", isProfile);
   for (const metric of metrics) {
     const card = element("article", undefined, "metric");
-    const value = element("div", metric.value === null ? "—" : format.format(metric.value), "metric-value");
-    if (metric.value !== null && metric.scale) value.append(element("small", " / " + metric.scale));
-    const subtitle = [metric.source];
-    if (metric.month !== null) subtitle.push(month(metric.month).toLowerCase());
-    if (metric.value === null) subtitle.push("нет оценки");
-    const quality = rating(metric.value, metric.scale);
+    const latest = metric.change?.latest;
+    const measured = latest?.value ?? null;
+    const value = element("div", measured === null ? "—" : format.format(measured), "metric-value");
+    if (latest) value.append(element("small", " / " + metric.scale));
+    const subtitle = latest ? metric.source + " · мес. " + latest.month + " · " + responseLabel(latest.responses)
+      : metric.source + " · нет оценки";
+    const quality = rating(measured, metric.scale);
     if (quality) card.dataset.tone = quality.tone;
-    card.append(element("h2", metric.label), value, element("p", subtitle.join(" · ")));
-    if (quality) card.append(element("span", quality.label, "rating-label"));
+    card.append(element("h2", metric.label), value, element("p", subtitle));
+    card.append(element("p", changeLabel(metric.change), "metric-change"));
     grid.append(card);
   }
 }
@@ -111,7 +128,9 @@ function renderDirectory(page, interns) {
   const list = page.querySelector(".directory-list");
   const heading = element("div", undefined, "directory-header");
   heading.setAttribute("aria-hidden", "true");
-  for (const title of ["Стажёр", "Удовлетворённость", "Готовность к найму"]) heading.append(element("span", title));
+  for (const title of ["Стажёр", "Оценка программы", "Рекомендация к найму", "Прогресс по оценке наставников"]) {
+    heading.append(element("span", title));
+  }
   list.append(heading);
   for (const intern of interns) {
     const row = link(undefined, internPath(intern.id), "directory-row");
@@ -120,32 +139,42 @@ function renderDirectory(page, interns) {
     const satisfaction = element("div");
     satisfaction.append(element("small", "Удовлетворённость", "row-label"), coloredScore(intern.satisfaction, 5));
     const readiness = element("div");
-    readiness.append(element("small", "Готовность к найму", "row-label"), coloredScore(intern.readiness, 10));
+    readiness.append(element("small", "Рекомендация к найму", "row-label"), coloredScore(intern.readiness, 10));
     if (intern.mentor_month !== null) readiness.append(element("small", "Наставник · " + month(intern.mentor_month).toLowerCase()));
+    const progress = element("div", undefined, "row-progress");
+    const dynamics = changeLabel(intern.progress);
+    progress.append(element("small", "Прогресс по оценке наставников", "row-label"), element("span", dynamics));
     const arrow = element("span", "›");
     arrow.setAttribute("aria-hidden", "true");
-    row.append(identity, satisfaction, readiness, arrow);
-    row.setAttribute("aria-label",
-      intern.id + ", " + month(intern.month) + ", удовлетворённость: " + score(intern.satisfaction, 5) +
-      ", готовность к найму: " + score(intern.readiness, 10) +
-      (intern.mentor_month === null ? "" : ", " + month(intern.mentor_month).toLowerCase()));
+    row.append(identity, satisfaction, readiness, progress, arrow);
     list.append(row);
   }
 }
 
-function renderComments(page, comments) {
-  const feedback = page.querySelector(".feedback");
-  const list = feedback.querySelector(".comment-list");
-  feedback.hidden = false;
-  if (!comments.length) {
-    list.append(element("p", "Отзывов наставников пока нет."));
-    return;
+function commentCard(comment) {
+  const article = element("article");
+  const attribution = month(comment.month) + (comment.mentor ? " · " + comment.mentor : "");
+  article.append(element("p", attribution, "comment-meta"), element("p", comment.text));
+  return article;
+}
+
+function renderComments(page, profile) {
+  page.querySelector(".feedback").hidden = false;
+  const fresh = page.querySelector(".fresh-feedback");
+  const newestMonth = profile.comments[0]?.month;
+  if (newestMonth !== undefined) {
+    fresh.hidden = false;
+    fresh.append(...profile.comments.filter((comment) => comment.month === newestMonth).map(commentCard));
   }
-  for (const comment of comments) {
-    const article = element("article");
-    article.append(element("p", month(comment.month) + " · " + comment.mentor, "comment-meta"), element("p", comment.text));
-    list.append(article);
-  }
+  const interns = page.querySelector(".intern-comments");
+  const mentors = page.querySelector(".mentor-comments");
+  const earlier = profile.comments.filter((comment) => comment.month !== newestMonth);
+  interns.append(...(profile.intern_comments.length ? profile.intern_comments.map(commentCard) : [
+    element("p", "Комментариев стажёра пока нет."),
+  ]));
+  mentors.append(...(earlier.length ? earlier.map(commentCard) : [
+    element("p", newestMonth === undefined ? "Отзывов пока нет." : "Более ранних отзывов нет."),
+  ]));
 }
 
 function loadPlotly() {
@@ -154,7 +183,10 @@ function loadPlotly() {
       const script = element("script");
       script.src = "/assets-vendor/plotly.js";
       script.onload = () => resolve(window.Plotly);
-      script.onerror = reject;
+      script.onerror = () => {
+        script.remove();
+        reject(new Error("Не удалось загрузить библиотеку графиков."));
+      };
       document.head.append(script);
     }).catch((error) => {
       plotlyLoading = undefined;
@@ -220,40 +252,82 @@ function drawChart(graph, traces, layout, signal) {
     graph.append(element("p", "Недостаточно данных для диаграммы."));
     return;
   }
+
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
-  const animate = !motion.matches && "IntersectionObserver" in window && typeof graph.animate === "function";
-  if (animate) graph.classList.add("chart-awaiting");
-  loadPlotly().then(async (plotly) => {
-    if (signal.aborted) return;
-    signal.addEventListener("abort", () => plotly.purge(graph), { once: true });
-    await plotly.newPlot(graph, traces, {
-      height: 262, margin: { t: 14, r: 18, b: 48, l: 42 },
-      font: { family: "system-ui, sans-serif", color: "#555a64", size: 12 },
-      paper_bgcolor: "transparent", plot_bgcolor: "transparent", separators: ", ",
-      showlegend: false, ...layout,
-    }, { responsive: true, displayModeBar: false, scrollZoom: false });
-    if (animate && !signal.aborted) revealChart(graph, traces[0], signal, motion);
-  }).catch(() => {
-    if (signal.aborted) return;
-    graph.classList.remove("chart-awaiting");
-    graph.removeAttribute("aria-hidden");
-    graph.replaceChildren(element("p", "Диаграмма недоступна. Значения приведены в таблице."));
-  });
+  const observe = "IntersectionObserver" in window;
+  function render() {
+    const animate = !motion.matches && observe && typeof graph.animate === "function";
+    if (animate) graph.classList.add("chart-awaiting");
+    loadPlotly().then(async (plotly) => {
+      if (signal.aborted) return;
+      signal.addEventListener("abort", () => plotly.purge(graph), { once: true });
+      await plotly.newPlot(graph, traces, {
+        height: 262, margin: { t: 14, r: 18, b: 48, l: 42 },
+        font: { family: "system-ui, sans-serif", color: "#555a64", size: 12 },
+        paper_bgcolor: "transparent", plot_bgcolor: "transparent", separators: ", ",
+        showlegend: false, ...layout,
+      }, { responsive: true, displayModeBar: false, scrollZoom: false });
+      if (animate && !signal.aborted) revealChart(graph, traces[0], signal, motion);
+    }).catch(() => {
+      if (signal.aborted) return;
+      graph.classList.remove("chart-awaiting");
+      graph.removeAttribute("aria-hidden");
+      graph.replaceChildren(element("p", "Диаграмма недоступна. Значения приведены в таблице."));
+    });
+  }
+
+  if (!observe) {
+    render();
+    return;
+  }
+  const observer = new IntersectionObserver(([entry]) => {
+    if (signal.aborted || !entry.isIntersecting) return;
+    observer.disconnect();
+    render();
+  }, { rootMargin: "200px 0px" });
+  observer.observe(graph);
+  signal.addEventListener("abort", () => observer.disconnect(), { once: true });
 }
 
-function renderSatisfaction(page, chart, signal) {
+function describeSeries(chart) {
+  return chart.series.map((series) => {
+    const observations = series.points.filter(({ value }) => value !== null);
+    if (!observations.length) return series.label + ": нет оценок.";
+    const first = observations[0];
+    const last = observations.at(-1);
+    const value = (point) => score(point.value, chart.scale?.[1]) + (chart.unit ? " " + chart.unit : "");
+    const previous = first !== last ? "месяц " + first.month + " — " + value(first) + "; " : "";
+    return series.label + ": " + previous + "месяц " + last.month + " — " + value(last) + ".";
+  }).join(" ");
+}
+
+function trendFigure(chart) {
   const series = chart.series.filter((item) => item.points.some(({ value }) => value !== null));
-  drawChart(page.querySelector(".chart"), series.map((item, index) => ({
-    type: "scatter", mode: "lines+markers", name: item.label,
-    x: item.points.map(({ month }) => month), y: item.points.map(({ value }) => value),
-    line: { color: [palette.blue, palette.violet][index], width: 3 }, marker: { size: 8 },
-    connectgaps: false,
-  })), {
-    xaxis: { dtick: 1, title: { text: "Месяц" }, showgrid: false },
-    yaxis: { range: [.8, 5.2], dtick: 1, gridcolor: "#e9edf3" },
-    showlegend: series.length > 1,
-    legend: { orientation: "h", x: 0, y: 1.03, yanchor: "bottom" },
-  }, signal);
+  const [minimum, maximum] = chart.scale;
+  return {
+    traces: series.map((item, index) => ({
+      type: "scatter", mode: "lines+markers", name: item.label,
+      x: item.points.map(({ month }) => month), y: item.points.map(({ value }) => value),
+      line: { color: [palette.blue, palette.violet][index], width: 3, dash: index ? "dash" : "solid" },
+      marker: { size: 8, symbol: index ? "diamond" : "circle" },
+      connectgaps: false,
+    })),
+    layout: {
+      xaxis: { dtick: 1, title: { text: "Месяц" }, showgrid: false },
+      yaxis: { range: [minimum - .2, maximum + .2], dtick: maximum === 10 ? 2 : 1, gridcolor: "#e9edf3" },
+      showlegend: series.length > 1,
+      legend: { orientation: "h", x: 0, y: 1.03, yanchor: "bottom" },
+    },
+  };
+}
+
+function renderMainChart(page, data, profile, signal) {
+  const chart = profile ? data.charts[0] : data.charts.find(({ id }) => id === "readiness");
+  page.querySelector("#chart-heading").textContent = profile ? "Удовлетворённость по месяцам" : "Рекомендация к найму по месяцам";
+  const caption = page.querySelector(".chart-panel .chart-caption");
+  caption.textContent = describeSeries(chart);
+  const { traces, layout } = trendFigure(chart);
+  drawChart(page.querySelector(".chart"), traces, layout, signal);
 }
 
 function renderMonthly(page, charts) {
@@ -290,7 +364,7 @@ function valuesTable(label, headers, rows) {
 }
 
 function renderAdditionalCharts(page, data, isProfile, signal) {
-  page.querySelector("#chart-section-heading").textContent = isProfile ? "Профиль и оценки наставника" : "Наставничество";
+  page.querySelector("#chart-section-heading").textContent = isProfile ? "Профиль и оценки наставника" : "Динамика и наставничество";
   const grid = page.querySelector(".chart-grid");
   const axes = { fixedrange: true, gridcolor: "#eaedf1", zeroline: false };
 
@@ -304,14 +378,24 @@ function renderAdditionalCharts(page, data, isProfile, signal) {
       wrap.append(table);
       card.append(wrap);
     }
+    if (!table) {
+      const tableLink = element("a", "Помесячные значения", "chart-table-link");
+      tableLink.href = "#monthly";
+      card.append(tableLink);
+    }
     grid.append(card);
     drawChart(graph, traces, layout, signal);
   }
 
   if (!isProfile) {
+    for (const id of ["satisfaction", "progress"]) {
+      const trend = data.charts.find((item) => item.id === id);
+      const { traces, layout } = trendFigure(trend);
+      panel(trend.label + " по месяцам", describeSeries(trend), traces, layout);
+    }
     const chart = data.charts.find(({ id }) => id === "hours");
     const points = chart.series[0].points;
-    panel("Время наставничества", "Суммарные часы по месяцам", points.some(({ value }) => value !== null) ? [{
+    panel("Время наставничества", describeSeries(chart), points.some(({ value }) => value !== null) ? [{
       type: "bar", x: points.map(({ month }) => month), y: points.map(({ value }) => value),
       marker: { color: palette.blue, cornerradius: 5 }, hovertemplate: "Месяц %{x} · %{y} ч<extra></extra>",
     }] : [], {
@@ -321,7 +405,7 @@ function renderAdditionalCharts(page, data, isProfile, signal) {
 
     const groups = data.readiness_distribution;
     const count = groups.reduce((sum, group) => sum + group.count, 0);
-    panel("Распределение готовности к найму", "Доли оценок наставников за весь период · шкала 0–10", count ? [{
+    panel("Распределение рекомендаций к найму", "Оценки наставников за весь период · " + responseLabel(count) + ". Числа по диапазонам приведены ниже.", count ? [{
       type: "pie", hole: .68, sort: false, labels: groups.map((group) => group.label),
       values: groups.map((group) => group.count), textinfo: "none",
       marker: { colors: [palette.rose, palette.amber, palette.green], line: { width: 2, color: "#fff" } },
@@ -330,7 +414,7 @@ function renderAdditionalCharts(page, data, isProfile, signal) {
       margin: { t: 9, b: 44, l: 0, r: 0 }, showlegend: true,
       legend: { orientation: "h", x: .5, xanchor: "center", y: -.05, font: { size: 11 } },
       annotations: [{ text: String(count), x: .5, y: .5, showarrow: false, font: { size: 25, color: "#1d1d1f" } }],
-    }, valuesTable("Распределение готовности к найму", ["Баллы", "Число оценок"],
+    }, valuesTable("Распределение рекомендаций к найму", ["Баллы", "Число оценок"],
       groups.map((group) => [group.label, group.count])));
     return;
   }
@@ -352,7 +436,7 @@ function renderAdditionalCharts(page, data, isProfile, signal) {
     });
   }
   const sameMonth = months[0] === months[1];
-  panel("Карта сильных сторон", sameMonth ? "Самооценка за единственный доступный месяц · шкала 1–5" :
+  panel("Самооценка стажёра", sameMonth ? "Самооценка за единственный доступный месяц · шкала 1–5" :
     "Самооценка в первом и последнем доступных месяцах · шкала 1–5", comparison, {
     margin: { t: 28, r: 52, b: 54, l: 52 }, showlegend: true,
     legend: { orientation: "h", x: .5, xanchor: "center", y: -.14 },
@@ -364,9 +448,10 @@ function renderAdditionalCharts(page, data, isProfile, signal) {
 
   const chart = data.charts.find(({ id }) => id === "readiness");
   const points = chart.series[0].points;
-  panel("Готовность к найму по месяцам", "Оценки наставников · шкала 0–10", points.some(({ value }) => value !== null) ? [{
+  panel("Рекомендация к найму по месяцам", describeSeries(chart), points.some(({ value }) => value !== null) ? [{
     type: "scatter", mode: "markers", x: points.map(({ month }) => month), y: points.map(({ value }) => value),
-    marker: { size: 12, color: points.map(({ value }) => palette[rating(value, 10)?.tone || "neutral"]) },
+    marker: { size: 12, color: points.map(({ value }) => palette[rating(value, 10)?.tone || "neutral"]),
+      line: { width: 1, color: "#575366" } },
     hovertemplate: "Месяц %{x} · %{y} / 10<extra></extra>",
   }] : [], {
     xaxis: { ...axes, dtick: 1, showgrid: false, title: { text: "Месяц" } },
@@ -387,7 +472,9 @@ function revealAnalysis(output, text, signal, animate) {
   animated.setAttribute("aria-hidden", "true");
   readable.classList.add("analysis-reserve");
   wrapper.append(readable, animated);
-  output.append(wrapper);
+  const skip = element("button", "Показать весь вывод", "analysis-skip");
+  skip.type = "button";
+  output.append(wrapper, skip);
 
   const characters = Intl.Segmenter
     ? Array.from(new Intl.Segmenter("ru", { granularity: "grapheme" }).segment(text), ({ segment }) => segment)
@@ -400,9 +487,15 @@ function revealAnalysis(output, text, signal, animate) {
   function finish() {
     animated.remove();
     readable.classList.remove("analysis-reserve");
+    skip.remove();
   }
+  skip.addEventListener("click", () => {
+    finish();
+    output.tabIndex = -1;
+    output.focus({ preventScroll: true });
+  });
   function step(now) {
-    if (signal.aborted || !wrapper.isConnected) return;
+    if (signal.aborted || !animated.isConnected) return;
     if (motion.matches || document.hidden) {
       finish();
       return;
@@ -417,7 +510,29 @@ function revealAnalysis(output, text, signal, animate) {
   requestAnimationFrame(step);
 }
 
-function renderAnalysis(page, id, startMonth, endMonth, signal) {
+function renderEvidence(page, data, profile) {
+  const list = page.querySelector(".analysis-evidence ul");
+  const metrics = [...data.metrics];
+  if (profile && data.mentor_progress) {
+    metrics.push({ label: "Прогресс в обучении", source: "Оценка наставников", scale: 5, change: data.mentor_progress });
+  }
+  for (const metric of metrics) {
+    if (!metric.change) continue;
+    const { first, latest } = metric.change;
+    const line = element("li");
+    const previous = first.month === latest.month ? "" :
+      format.format(first.value) + " · мес. " + first.month + ", " + responseLabel(first.responses) + " → ";
+    line.append(element("strong", metric.label), element("small",
+      metric.source + " · " + previous + score(latest.value, metric.scale) +
+      " · мес. " + latest.month + ", " + responseLabel(latest.responses)));
+    list.append(line);
+  }
+  if (!list.children.length) list.append(element("li", "В опросах пока нет оценок для вывода."));
+}
+
+function renderAnalysis(page, id, data, signal) {
+  const { first_month: startMonth, last_month: endMonth } = data;
+  const query = "?version=" + encodeURIComponent(data.data_version);
   const endpoint = id ? "/api" + internPath(id) + "/analysis" : "/api/analysis/overview";
   const button = page.querySelector(".analysis-action");
   const output = page.querySelector(".analysis-output");
@@ -426,7 +541,9 @@ function renderAnalysis(page, id, startMonth, endMonth, signal) {
     startMonth === endMonth ? month(startMonth) : "Месяцы " + startMonth + "–" + endMonth;
 
   let freshlyRequested = false;
+  let reloadData = false;
   const messages = {
+    available: "Анализ ещё не сформирован.",
     unavailable: "ИИ-анализ доступен после подключения модели.",
     running: "Формируем вывод по данным опросов…",
     error: "Не удалось получить вывод. Попробуйте ещё раз.",
@@ -438,9 +555,9 @@ function renderAnalysis(page, id, startMonth, endMonth, signal) {
     output.textContent = status === "ready" ? "" : result.error_message || messages[status];
     output.classList.toggle("analysis-running", status === "running");
     if (status === "ready") revealAnalysis(output, result.text, signal, freshlyRequested);
-    button.hidden = status !== "ready" && status !== "error";
+    button.hidden = !["ready", "error", "available"].includes(status);
     button.disabled = status === "running";
-    button.textContent = {
+    button.textContent = reloadData ? "Обновить данные" : {
       ready: "Обновить вывод", running: "Готовим вывод…", error: "Повторить",
     }[status] || "Сформировать вывод";
     if (status === "error" && result.text) {
@@ -468,20 +585,23 @@ function renderAnalysis(page, id, startMonth, endMonth, signal) {
       output.classList.add("analysis-running");
     }
     try {
-      const result = await request(endpoint + (reuse ? "?refresh=false" : ""), signal, method);
+      const result = await request(endpoint + query + (reuse ? "&refresh=false" : ""), signal, method);
       if (reuse && result.status === "ready") freshlyRequested = false;
       show(result);
-    } catch {
-      if (!signal.aborted) show({ status: "error" });
+    } catch (error) {
+      if (signal.aborted) return;
+      reloadData = error.status === 409;
+      show({ status: "error", error_message: reloadData ? error.message : null });
     }
   }
 
-  button.addEventListener("click", () => refresh("POST"));
+  button.addEventListener("click", () => reloadData ? renderRoute(true) : refresh("POST"));
   refresh("POST", true);
 }
 
 async function renderRoute(focus = false) {
   routeController?.abort();
+  activePath = location.pathname;
   routeController = new AbortController();
   const { signal } = routeController;
   let id;
@@ -497,6 +617,9 @@ async function renderRoute(focus = false) {
       overviewRequest, id ? request("/api" + internPath(id), signal) : Promise.resolve(null),
     ]);
     if (signal.aborted) return;
+    if (profile && overview.data_version !== profile.data_version) {
+      throw new Error("Опросы обновились во время загрузки. Попробуйте ещё раз.");
+    }
     renderNavigation(overview.interns, id);
     const page = template.content.cloneNode(true).firstElementChild;
     const title = id ? "Стажёр " + id : "Обзор программы";
@@ -504,19 +627,21 @@ async function renderRoute(focus = false) {
     page.querySelector("h1").textContent = title;
     page.querySelector(".page-meta").textContent = profile ? "Последний ответ стажёра · " + month(profile.month).toLowerCase()
       : "Месяцы " + overview.first_month + "–" + overview.last_month + " · Стажёры: " + overview.intern_count +
-        " · Наставники: " + overview.mentor_count + " · Ответы: " + overview.response_count;
+        " (" + responseLabel(overview.intern_responses) + ") · Наставники: " +
+        overview.mentor_count + " (" + responseLabel(overview.mentor_responses) + ")";
     const data = profile || overview;
     page.classList.toggle("profile", Boolean(profile));
     renderMetrics(page, data.metrics, Boolean(profile));
     renderMonthly(page, data.charts);
-    if (profile) renderComments(page, profile.comments);
+    if (profile) renderComments(page, profile);
     else renderDirectory(page, overview.interns);
     main.replaceChildren(page);
-    renderSatisfaction(page, data.charts[0], signal);
+    renderMainChart(page, data, profile, signal);
     renderAdditionalCharts(page, data, Boolean(profile), signal);
-    renderAnalysis(page, id, data.first_month, data.last_month, signal);
-    if (focus) main.focus({ preventScroll: true });
-    if (location.hash === "#intern-directory") page.querySelector(".directory").scrollIntoView();
+    renderEvidence(page, data, profile);
+    renderAnalysis(page, id, data, signal);
+    if (location.hash) focusSection(location.hash);
+    else if (focus) main.focus({ preventScroll: true });
   } catch (error) {
     if (signal.aborted) return;
     const panel = element("section", undefined, "error");
@@ -532,6 +657,13 @@ async function renderRoute(focus = false) {
   }
 }
 
+function focusSection(hash) {
+  const section = document.getElementById(hash.slice(1));
+  if (!section) return;
+  section.focus({ preventScroll: true });
+  section.scrollIntoView();
+}
+
 function navigate(path) {
   if (location.pathname === path) {
     if (location.hash) history.replaceState(null, "", path);
@@ -545,11 +677,20 @@ function navigate(path) {
 
 document.addEventListener("click", (event) => {
   if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-  const target = event.target.closest("a[data-route]");
+  const target = event.target.closest("a");
   if (!target) return;
-  event.preventDefault();
-  navigate(target.pathname);
+  if (target.hasAttribute("data-route")) {
+    event.preventDefault();
+    navigate(target.pathname);
+  } else if (target.getAttribute("href")?.startsWith("#")) {
+    event.preventDefault();
+    if (location.hash !== target.hash) history.pushState(null, "", target.hash);
+    focusSection(target.hash);
+  }
 });
 mobileIntern.addEventListener("change", () => navigate(mobileIntern.value ? internPath(mobileIntern.value) : "/"));
-window.addEventListener("popstate", () => renderRoute(true));
+window.addEventListener("popstate", () => {
+  if (location.pathname !== activePath) renderRoute(true);
+  else if (location.hash) focusSection(location.hash);
+});
 renderRoute();

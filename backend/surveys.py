@@ -54,27 +54,63 @@ MENTOR_COLUMNS = [
 ]
 
 
+class SurveyDataError(ValueError):
+    """Ошибку можно показать пользователю без значений из анкеты."""
+
+
+def _invalid(path: Path, invalid: pd.Series, message: str) -> None:
+    if invalid.any():
+        row = invalid[invalid].index[0] + 2
+        raise SurveyDataError(f"{path.name}, строка {row}. {message}")
+
+
 def _load(path: Path, expected_columns: list[str]) -> pd.DataFrame:
-    df = load_excel(path, sheet_name="Данные")
+    try:
+        df = load_excel(path, sheet_name="Данные")
+    except (OSError, ValueError) as exc:
+        raise SurveyDataError(f"{path.name}. Проверьте, доступен ли файл и есть ли в нём лист «Данные».") from exc
     missing = [col for col in expected_columns if col not in df.columns]
     if missing:
-        raise ValueError(f"В файле {path.name} отсутствуют колонки: {missing}")
-    df[MONTH] = df[MONTH].astype(int)
-    return df.sort_values([df.columns[0], MONTH]).reset_index(drop=True)
+        raise SurveyDataError(f"{path.name}. Отсутствуют колонки {', '.join(missing)}.")
+
+    mentor = MENTOR_ID in expected_columns
+    keys = [MENTOR_ID, INTERN_ID] if mentor else [INTERN_ID]
+    for key in keys:
+        identifiers = df[key].astype("string").str.strip()
+        _invalid(path, identifiers.isna() | identifiers.eq(""), f"Заполните колонку «{key}».")
+        df[key] = identifiers
+
+    months = pd.to_numeric(df[MONTH], errors="coerce")
+    _invalid(path, ~months.isin(range(1, 7)), "Номер месяца должен быть целым числом от 1 до 6.")
+    df[MONTH] = months.astype(int)
+    _invalid(path, df.duplicated([*keys, MONTH]), "В опросе есть повторная строка для этого месяца.")
+
+    limits = {name: (1, 5) for name in (MENTOR_METRICS if mentor else INTERN_METRICS)}
+    limits.update({HOURS: (0, float("inf")), HIRE_READINESS: (0, 10)} if mentor else {NPS: (0, 10)})
+    for name, (lower, upper) in limits.items():
+        values = pd.to_numeric(df[name], errors="coerce")
+        out_of_range = ~values.between(lower, upper) | values.eq(float("inf"))
+        _invalid(path, df[name].notna() & out_of_range, f"Проверьте значение в колонке «{name}».")
+        df[name] = values
+
+    return df.sort_values([*keys, MONTH]).reset_index(drop=True)
 
 
 def load_intern_data() -> pd.DataFrame:
-    """Таблица ответов стажёров (5 стажёров × 6 месяцев)."""
     return _load(INTERN_FILE, INTERN_COLUMNS)
 
 
 def load_mentor_data() -> pd.DataFrame:
-    """Таблица ответов наставников (5 наставников × 6 месяцев)."""
     return _load(MENTOR_FILE, MENTOR_COLUMNS)
 
 
 def load_all() -> tuple[pd.DataFrame, pd.DataFrame]:
-    return load_intern_data(), load_mentor_data()
+    interns, mentors = load_intern_data(), load_mentor_data()
+    if interns.empty:
+        raise SurveyDataError(f"{INTERN_FILE.name}. Добавьте хотя бы одну анкету стажёра.")
+    if not mentors[INTERN_ID].isin(interns[INTERN_ID]).all():
+        raise SurveyDataError(f"{MENTOR_FILE.name}. Найдены ID стажёров, которых нет в {INTERN_FILE.name}.")
+    return interns, mentors
 
 
 def intern_ids(intern_df: pd.DataFrame) -> list[str]:

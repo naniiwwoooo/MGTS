@@ -6,6 +6,20 @@ from typing import Literal
 from pydantic import BaseModel
 
 
+class Point(BaseModel):
+    month: int
+    value: float | None
+
+
+class Observation(Point):
+    responses: int
+
+
+class Change(BaseModel):
+    first: Observation
+    latest: Observation
+
+
 class Metric(BaseModel):
     label: str
     value: float | None
@@ -13,11 +27,7 @@ class Metric(BaseModel):
     unit: str | None = None
     source: str
     month: int | None = None
-
-
-class Point(BaseModel):
-    month: int
-    value: float | None
+    change: Change | None = None
 
 
 class Series(BaseModel):
@@ -39,11 +49,17 @@ class InternSummary(BaseModel):
     satisfaction: float | None
     readiness: float | None
     mentor_month: int | None
+    progress: Change | None = None
 
 
 class Comment(BaseModel):
     month: int
     mentor: str
+    text: str
+
+
+class InternComment(BaseModel):
+    month: int
     text: str
 
 
@@ -59,11 +75,14 @@ class ProfileAxis(BaseModel):
 
 
 class Overview(BaseModel):
+    data_version: str
     first_month: int
     last_month: int
     intern_count: int
     mentor_count: int
     response_count: int
+    intern_responses: int
+    mentor_responses: int
     metrics: list[Metric]
     charts: list[Chart]
     interns: list[InternSummary]
@@ -71,6 +90,7 @@ class Overview(BaseModel):
 
 
 class Profile(BaseModel):
+    data_version: str
     id: str
     month: int
     first_month: int
@@ -78,6 +98,8 @@ class Profile(BaseModel):
     metrics: list[Metric]
     charts: list[Chart]
     comments: list[Comment]
+    intern_comments: list[InternComment]
+    mentor_progress: Change | None = None
     response_profile: list[ProfileAxis]
     response_months: tuple[int, int]
 
