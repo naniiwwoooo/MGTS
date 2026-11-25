@@ -37,6 +37,13 @@ DEFAULT_PROMPT_HEADER = (
     "по делу."
 )
 
+INTERN_PROMPT_HEADER = (
+    "Ты — аналитик HR-данных. Ниже результаты опроса конкретного стажёра за "
+    "6 месяцев, оценки наставников и их комментарии. Напиши краткое общее "
+    "впечатление о стажёре: динамика, сильные стороны, зоны роста и "
+    "рекомендации наставнику. Пиши по-русски, дружелюбно и по делу."
+)
+
 ENV_PATH = Path(__file__).resolve().parent / ".env"
 
 # Кэш access token GigaChat (токен живёт ~30 минут).
@@ -118,6 +125,60 @@ def build_context(intern_df: pd.DataFrame, mentor_df: pd.DataFrame) -> str:
 
 def build_prompt(intern_df: pd.DataFrame, mentor_df: pd.DataFrame) -> str:
     return f"{DEFAULT_PROMPT_HEADER}\n\n{build_context(intern_df, mentor_df)}"
+
+
+def build_intern_context(
+    intern_df: pd.DataFrame, mentor_df: pd.DataFrame, intern_id: str
+) -> str:
+    """Формирует текстовый контекст по конкретному стажёру.
+
+    Включает ответы стажёра по месяцам, средние значения, оценки наставников
+    и их комментарии.
+    """
+    timeline = dl.intern_timeline(intern_df, intern_id)
+    if timeline.empty:
+        return f"Стажёр: {intern_id}\nНет данных опроса по этому стажёру."
+
+    averages = timeline[dl.INTERN_METRICS].mean()
+    avg_nps = timeline[dl.NPS].mean()
+
+    lines = [
+        f"Стажёр: {intern_id}",
+        "",
+        "Средние ответы стажёра за 6 месяцев (1–5, NPS 0–10):",
+        *[f"- {metric}: {averages[metric]:.2f}/5" for metric in dl.INTERN_METRICS],
+        f"- NPS: {avg_nps:.1f}/10",
+        "",
+        "Ответы стажёра по месяцам:",
+        timeline[[dl.MONTH, *dl.INTERN_METRICS, dl.NPS]].round(2).to_string(index=False),
+    ]
+
+    mentor_tl = dl.mentor_timeline(mentor_df, intern_id)
+    if not mentor_tl.empty:
+        lines += [
+            "",
+            "Оценки наставников по месяцам:",
+            mentor_tl[[dl.MONTH, "Прогресс стажёра", dl.HIRE_READINESS]]
+            .round(2)
+            .to_string(index=False),
+        ]
+
+    comments = dl.mentor_comments(mentor_df, intern_id)
+    if not comments.empty:
+        lines += ["", "Комментарии наставников:"]
+        for _, item in comments.iterrows():
+            lines.append(
+                f"- Месяц {int(item[dl.MONTH])}, наставник {item[dl.MENTOR_ID]}: "
+                f"{item[dl.COMMENT]}"
+            )
+
+    return "\n".join(lines)
+
+
+def build_intern_prompt(
+    intern_df: pd.DataFrame, mentor_df: pd.DataFrame, intern_id: str
+) -> str:
+    return f"{INTERN_PROMPT_HEADER}\n\n{build_intern_context(intern_df, mentor_df, intern_id)}"
 
 
 def _ssl_context() -> ssl.SSLContext:
@@ -377,5 +438,36 @@ def generate_overall_impression(
     except Exception as exc:  # noqa: BLE001
         return (
             "Не удалось получить ответ от ИИ-модели. "
+            f"Причина: {exc}. Проверьте ключ GigaChat (LLM_API_KEY) и подключение к сети."
+        )
+
+
+def generate_intern_impression(
+    intern_df: pd.DataFrame, mentor_df: pd.DataFrame, intern_id: str, model: str | None = None
+) -> str:
+    """Возвращает общее впечатление ИИ о конкретном стажёре.
+
+    Передаёт модели ответы стажёра по месяцам, оценки наставников и их
+    комментарии. Результат кэшируется; при любой ошибке возвращается понятная
+    строка, чтобы дашборд не падал.
+    """
+    if not llm_available():
+        return (
+            f"AI-анализ по стажёру {intern_id} появится позже. "
+            "Изучите динамику ответов и комментарии наставников ниже."
+        )
+
+    try:
+        prompt = build_intern_prompt(intern_df, mentor_df, intern_id)
+        cache_key = f"intern:{intern_id}:{model or ''}\n{prompt}"
+        cached = _IMPRESSION_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        result = _call_model(prompt, model=model)
+        _IMPRESSION_CACHE[cache_key] = result
+        return result
+    except Exception as exc:  # noqa: BLE001
+        return (
+            f"Не удалось получить ответ от ИИ-модели по стажёру {intern_id}. "
             f"Причина: {exc}. Проверьте ключ GigaChat (LLM_API_KEY) и подключение к сети."
         )

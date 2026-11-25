@@ -105,6 +105,12 @@ def render_interns(intern_df, mentor_df) -> None:
         ]
     )
 
+    with st.spinner("ИИ готовит общее мнение о стажёре…"):
+        intern_impression = llm.generate_intern_impression(intern_df, mentor_df, selected)
+    if not llm.llm_available():
+        intern_impression += " Здесь появится развёрнутый анализ от LLM, когда подключим модель."
+    style.ai_block(f"Общее мнение ИИ о стажёре {selected}", intern_impression, badge="ИИ")
+
     style.section("Динамика ответов за 6 месяцев", "Все метрики опроса стажёра по месяцам.")
     show_chart(charts.intern_timeline_chart(timeline))
 
@@ -144,9 +150,9 @@ def render_interns(intern_df, mentor_df) -> None:
 
 def main() -> None:
     style.hero(
-        "MGTS · People Analytics",
+        "MGTS DASHBOARD",
         "Стажёрская программа",
-        "Единый взгляд на прогресс стажёров и работу наставников за шесть месяцев.",
+        "Единый взгляд на прогресс стажёров и работу наставников за шесть месяцев",
     )
 
     try:
