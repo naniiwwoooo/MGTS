@@ -86,6 +86,8 @@ button { border: 0; background: var(--blue); color: white; font-weight: 650; min
 button:hover { background: var(--blue-dark); }
 button:disabled { cursor: wait; opacity: .7; }
 select { min-height: 44px; width: 100%; padding: 8px 12px; background: var(--canvas); color: var(--ink); border: 1px solid var(--line); border-radius: 11px; }
+.chart-awaiting { opacity: 0; }
+.chart .barlayer .point path { transform-box: fill-box; transform-origin: center bottom; }
 .chart { min-height: 250px; margin-top: 4px; }
 .chart p { color: var(--muted); padding: 17px 0; }
 .table-scroll { overflow-x: auto; }
@@ -199,4 +201,5 @@ tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  .chart-awaiting { opacity: 1; }
 }

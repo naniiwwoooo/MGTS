@@ -164,23 +164,78 @@ function loadPlotly() {
   return plotlyLoading;
 }
 
+function revealChart(graph, trace, signal, motion) {
+  const timing = { duration: 580, easing: "cubic-bezier(.22,.75,.24,1)", fill: "backwards" };
+  const effects = {
+    bars: [".barlayer .point path", [
+      { opacity: .3, transform: "scaleY(.02)" }, { opacity: 1, transform: "scaleY(1)" },
+    ]],
+    ring: [".pielayer", [
+      { opacity: 0, clipPath: "circle(14% at 50% 50%)" },
+      { opacity: 1, clipPath: "circle(75% at 50% 50%)" },
+    ]],
+    radar: [".polarlayer .scatterlayer", [
+      { opacity: 0, clipPath: "circle(10% at 50% 50%)" },
+      { opacity: 1, clipPath: "circle(75% at 50% 50%)" },
+    ]],
+    points: [".scatterlayer .points .point", [{ opacity: 0 }, { opacity: 1 }]],
+    line: [".scatterlayer", [
+      { opacity: .55, clipPath: "inset(-10px 100% -10px -10px)" },
+      { opacity: 1, clipPath: "inset(-10px -10px -10px -10px)" },
+    ]],
+  };
+  const type = { bar: "bars", pie: "ring", scatterpolar: "radar" }[trace.type]
+    || (trace.mode === "markers" ? "points" : "line");
+  const animations = [];
+
+  const observer = new IntersectionObserver(([entry]) => {
+    if (signal.aborted || !entry.isIntersecting) return;
+    observer.disconnect();
+    graph.classList.remove("chart-awaiting");
+    if (motion.matches) return;
+    const [selector, frames] = effects[type];
+    const shapes = graph.querySelectorAll(selector);
+    if (!shapes.length) {
+      animations.push(graph.animate([{ opacity: 0, translate: "0 6px" }, { opacity: 1, translate: "0 0" }], timing));
+      return;
+    }
+    shapes.forEach((shape, index) => {
+      animations.push(shape.animate(frames, {
+        ...timing,
+        delay: type === "bars" || type === "points" ? Math.min(index * 35, 210) : 0,
+      }));
+    });
+  }, { threshold: .18 });
+
+  observer.observe(graph);
+  signal.addEventListener("abort", () => {
+    observer.disconnect();
+    animations.forEach((animation) => animation.cancel());
+  }, { once: true });
+}
+
 function drawChart(graph, traces, layout, signal) {
   if (!traces.length) {
     graph.removeAttribute("aria-hidden");
     graph.append(element("p", "Недостаточно данных для диаграммы."));
     return;
   }
-  loadPlotly().then((plotly) => {
+  const motion = matchMedia("(prefers-reduced-motion: reduce)");
+  const animate = !motion.matches && "IntersectionObserver" in window && typeof graph.animate === "function";
+  if (animate) graph.classList.add("chart-awaiting");
+  loadPlotly().then(async (plotly) => {
     if (signal.aborted) return;
     signal.addEventListener("abort", () => plotly.purge(graph), { once: true });
-    return plotly.newPlot(graph, traces, {
+    await plotly.newPlot(graph, traces, {
       height: 262, margin: { t: 14, r: 18, b: 48, l: 42 },
       font: { family: "system-ui, sans-serif", color: "#555a64", size: 12 },
       paper_bgcolor: "transparent", plot_bgcolor: "transparent", separators: ", ",
       showlegend: false, ...layout,
     }, { responsive: true, displayModeBar: false, scrollZoom: false });
+    if (animate && !signal.aborted) revealChart(graph, traces[0], signal, motion);
   }).catch(() => {
     if (signal.aborted) return;
+    graph.classList.remove("chart-awaiting");
     graph.removeAttribute("aria-hidden");
     graph.replaceChildren(element("p", "Диаграмма недоступна. Значения приведены в таблице."));
   });
