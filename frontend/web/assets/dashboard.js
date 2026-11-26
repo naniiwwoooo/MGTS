@@ -12,6 +12,7 @@ let plotlyLoading;
 let activePath;
 let navIds = [];
 let historyExpanded = false;
+const selectedTrends = new Set(["clarity", "expectations"]);
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -316,7 +317,7 @@ function revealChart(graph, trace, signal, motion) {
   }, { once: true });
 }
 
-function drawChart(graph, traces, layout, signal) {
+function drawChart(graph, traces, layout, signal, animateOnLoad = true) {
   if (!traces.length) {
     graph.removeAttribute("aria-hidden");
     graph.append(element("p", "Недостаточно данных для диаграммы."));
@@ -326,7 +327,7 @@ function drawChart(graph, traces, layout, signal) {
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   const observe = "IntersectionObserver" in window;
   function render() {
-    const animate = !motion.matches && observe && typeof graph.animate === "function";
+    const animate = animateOnLoad && !motion.matches && observe && typeof graph.animate === "function";
     if (animate) graph.classList.add("chart-awaiting");
     loadPlotly().then(async (plotly) => {
       if (signal.aborted) return;
@@ -392,17 +393,125 @@ function trendFigure(chart) {
 }
 
 function renderMainChart(page, data, signal) {
-  const own = data.charts.find(({ id }) => id === "clarity");
-  const mentor = data.charts.find(({ id }) => id === "expectations");
-  const chart = {
-    ...own, series: [
-      { ...own.series[0], label: "Стажеры · понятность задач" },
-      { ...mentor.series[0], label: "Наставники · понимание задач" },
-    ],
+  const styles = {
+    clarity: [palette.blue, "Понятность задач"],
+    mentoring: ["#138077", "Поддержка наставника"],
+    workload: ["#b96418", "Комфортность нагрузки"],
+    interest: ["#bc4372", "Интерес к задачам"],
+    development: ["#3b802e", "Профессиональное развитие"],
+    team: ["#50758f", "Взаимодействие с командой"],
+    satisfaction: ["#ae3b36", "Удовлетворённость"],
+    expectations: [palette.violet, "Понимание ожиданий"],
+    quality: ["#293e9f", "Качество выполнения задач"],
+    autonomy: ["#087eac", "Самостоятельность"],
+    deadlines: ["#826319", "Сроки и организация"],
+    initiative: ["#864967", "Инициативность"],
+    collaboration: ["#537356", "Наставник и команда"],
   };
-  page.querySelector("#chart-summary").textContent = describeSeries(chart);
-  const { traces, layout } = trendFigure(chart);
-  drawChart(page.querySelector(".chart-panel .chart"), traces, layout, signal);
+  const panel = page.querySelector(".chart-panel");
+  const options = panel.querySelector(".chart-options");
+  const key = panel.querySelector(".chart-key");
+  const count = panel.querySelector(".chart-selection-count");
+  const summary = panel.querySelector("#chart-summary");
+  let graph = panel.querySelector(".chart");
+  let drawing;
+  signal.addEventListener("abort", () => drawing?.abort(), { once: true });
+
+  const groups = new Map();
+  const entries = data.charts.map((chart) => {
+    const series = chart.series[0];
+    const [color, title] = styles[chart.id];
+    const source = series.label.replace("Стажеры", "Стажёры");
+    const hasValues = series.points.some(({ value }) => value !== null);
+    if (!groups.has(source)) {
+      const group = element("fieldset", undefined, "chart-option-group");
+      group.append(element("legend", source));
+      options.append(group);
+      groups.set(source, group);
+    }
+    const label = element("label", undefined, "chart-option");
+    const box = element("input");
+    box.type = "checkbox";
+    box.checked = selectedTrends.has(chart.id);
+    const name = element("span", chart.label);
+    if (!hasValues) name.append(element("small", "Нет оценок"));
+    label.append(box, swatch(color), name);
+    groups.get(source).append(label);
+    box.addEventListener("change", update);
+    return { chart, series, title, color, box, source, hasValues };
+  });
+
+  for (const button of panel.querySelectorAll("[data-chart-selection]")) {
+    button.addEventListener("click", () => {
+      for (const { box } of entries) box.checked = button.dataset.chartSelection === "all";
+      update();
+    });
+  }
+
+  function update() {
+    const animate = !drawing;
+    drawing?.abort();
+    drawing = new AbortController();
+    const selection = entries.filter(({ box }) => box.checked);
+    selectedTrends.clear();
+    for (const { chart } of selection) selectedTrends.add(chart.id);
+    count.textContent = "· " + selection.length + " из " + entries.length;
+    const visible = selection.filter(({ hasValues }) => hasValues);
+    const unavailable = selection.length - visible.length;
+    summary.textContent = visible.length > 2 ? "Оценки по шкале 1–5."
+      : visible.map(({ chart, series, title }) => describeSeries({ ...chart, series: [{ ...series, label: title }] })).join(" ");
+    if (unavailable && visible.length) {
+      summary.textContent += " Без оценок: " + unavailable + ".";
+    }
+
+    key.replaceChildren(...visible.map(({ title, color, source }) => {
+      const item = element("li");
+      item.title = source + " · " + title;
+      item.append(swatch(color), title);
+      return item;
+    }));
+    key.hidden = !visible.length;
+
+    const target = element("div", undefined, "chart");
+    graph.replaceWith(target);
+    graph = target;
+    if (!visible.length) {
+      target.append(element("p", selection.length ? "По выбранным показателям пока нет оценок."
+        : "Выберите показатели, чтобы увидеть их динамику."));
+      return;
+    }
+
+    target.setAttribute("aria-hidden", "true");
+    const figure = trendFigure({ scale: [1, 5], series: visible.map(({ series, title }) => ({ ...series, label: title })) });
+    const traces = figure.traces.map((trace, index) => {
+      const { color, source } = visible[index];
+      const fromMentor = source === "Наставники";
+      return {
+        ...trace,
+        line: { color, width: 2.5, dash: fromMentor ? "dash" : "solid" },
+        marker: { color, size: 7, symbol: fromMentor ? "diamond" : "circle" },
+        customdata: trace.y.map((value) => score(value, 5)),
+        hovertemplate: trace.name + " · %{customdata}<extra></extra>",
+      };
+    });
+    drawChart(target, traces, {
+      ...figure.layout,
+      height: visible.length > 8 ? 338 : 262,
+      showlegend: false,
+      hovermode: "x unified",
+      hoverlabel: { bgcolor: "#fff", bordercolor: "#d9e5f1", font: { size: 11 } },
+      xaxis: { ...figure.layout.xaxis, range: [.72, 6.28], fixedrange: true, unifiedhovertitle: { text: "Месяц %{x}" } },
+      yaxis: { ...figure.layout.yaxis, fixedrange: true },
+    }, drawing.signal, animate);
+  }
+  update();
+}
+
+function swatch(color) {
+  const dot = element("span", undefined, "chart-swatch");
+  dot.style.backgroundColor = color;
+  dot.setAttribute("aria-hidden", "true");
+  return dot;
 }
 
 function renderMonthly(page, charts) {
@@ -631,16 +740,12 @@ function watchUpdates(page, data, signal) {
   const refresh = page.querySelector(".data-refresh");
   function describe(sync) {
     status.textContent = {
-      history: "Источник: исторические анкеты Excel",
-      connected: sync.sources?.length === 1
-        ? (sync.sources[0] === "interns"
-          ? "Ответы стажёров из Google Forms и Excel · Оценки наставников из Excel"
-          : "Ответы стажёров из Excel · Оценки наставников из Google Forms и Excel")
-        : "Опросы стажёров и наставников из Google Forms и Excel",
+      history: "",
+      connected: "",
       partial: "Часть опросов Google Forms временно недоступна. Для неё показаны последние доступные данные.",
       error: "Google Forms временно недоступен. Показаны последние доступные данные.",
     }[sync.state];
-    if (sync.detail) status.textContent += " " + sync.detail;
+    if (sync.detail) status.textContent = [status.textContent, sync.detail].filter(Boolean).join(" ");
   }
   describe(data.sync);
   let checking = false;
@@ -656,7 +761,7 @@ function watchUpdates(page, data, signal) {
         else renderRoute(manual);
       } else {
         describe(update.sync);
-        if (manual && update.sync.state !== "error" && !update.sync.detail) status.textContent += " · актуально";
+        if (manual && !status.textContent) status.textContent = "Данные актуальны.";
       }
     } catch {
       if (!signal.aborted) status.textContent = "Не удалось проверить обновления. Можно повторить.";

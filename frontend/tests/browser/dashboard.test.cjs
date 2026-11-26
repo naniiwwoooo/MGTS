@@ -156,6 +156,47 @@ test("Таблица остаётся доступной при сбое заг�
   });
 });
 
+test("График сравнивает один, несколько и все показатели", async (context) => {
+  await withPage(context, { viewport: { width: 390, height: 820 } }, async (page) => {
+    await page.goto(origin);
+    const panel = page.getByRole("region", { name: "Динамика оценок по месяцам" });
+    const picker = panel.locator("summary");
+    const graph = panel.locator(".chart");
+    await picker.click();
+    await panel.getByRole("button", { name: "Снять выбор" }).click();
+    await panel.getByText("Выберите показатели, чтобы увидеть их динамику.").waitFor();
+    const clarity = panel.getByRole("checkbox", { name: "Понятность задач", exact: true });
+    const interest = panel.getByRole("checkbox", { name: "Интерес к задачам", exact: true });
+    await clarity.check();
+    await graph.scrollIntoViewIfNeeded();
+    await graph.locator(".scatterlayer .trace").first().waitFor();
+    assert.equal(await graph.locator(".scatterlayer .trace").count(), 1);
+    await interest.check();
+    await picker.click();
+    await graph.scrollIntoViewIfNeeded();
+    const point = graph.locator(".scatterlayer .trace").first().locator(".point").nth(2);
+    await point.waitFor();
+    const position = await point.boundingBox();
+    await page.mouse.move(position.x + position.width / 2, position.y + position.height / 2);
+    const tooltip = graph.locator(".hoverlayer");
+    await tooltip.getByText(/Понятность задач · .* \/ 5/).waitFor();
+    await tooltip.getByText(/Интерес к задачам · .* \/ 5/).waitFor();
+    assert.equal(await graph.locator(".scatterlayer .trace").count(), 2);
+    assert.notEqual(
+      await graph.locator(".scatterlayer .trace").nth(0).locator(".js-line").evaluate(node => node.style.stroke),
+      await graph.locator(".scatterlayer .trace").nth(1).locator(".js-line").evaluate(node => node.style.stroke),
+    );
+
+    await picker.click();
+    await panel.getByRole("button", { name: "Выбрать все" }).click();
+    await picker.click();
+    await graph.scrollIntoViewIfNeeded();
+    await graph.locator(".scatterlayer .trace").nth(12).waitFor();
+    assert.equal(await graph.locator(".scatterlayer .trace").count(), 13);
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  });
+});
+
 test("Все типы диаграмм сохраняют анимацию после отложенной загрузки", async (context) => {
   await withPage(context, { viewport: { width: 1440, height: 900 }, reducedMotion: "no-preference" }, async (page) => {
     await page.addInitScript(() => {
@@ -269,7 +310,7 @@ test("История показывает все контрольные меся
       assert.equal(await page.locator('.directory-row .submission[data-submitted="true"]').count(), 10);
     }
     await page.getByRole("button", { name: "Обновить данные" }).click();
-    await page.getByText(/исторические анкеты Excel · актуально/).waitFor();
+    await page.getByText("Данные актуальны.", { exact: true }).waitFor();
   });
 });
 
@@ -295,8 +336,8 @@ test("Дашборд автоматически показывает новые 
     await page.route("**/api/analysis/overview?*", route => route.fulfill({ json: { status: "unavailable" } }));
     await page.evaluate(() => { window.dashboardPageSentinel = true; });
     await page.clock.fastForward(15_000);
-    await page.getByText("Опросы стажёров и наставников из Google Forms и Excel").waitFor();
     await page.locator(".metric-value").first().getByText("3,2", { exact: false }).waitFor();
+    assert.equal(await page.locator(".source-status").textContent(), "");
     await page.getByText(/Стажёры: 6 \(31 ответ\)/).waitFor();
     const sidebar = page.getByRole("navigation", { name: "Разделы" });
     assert.equal(await sidebar.getByRole("link", { name: /^СТ-/ }).count(), 5);

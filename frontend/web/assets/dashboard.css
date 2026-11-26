@@ -103,6 +103,31 @@ select { min-height: 44px; width: 100%; padding: 8px 12px; background: var(--can
 .chart .barlayer .point path { transform-box: fill-box; transform-origin: center bottom; }
 .chart { min-height: 250px; margin-top: 4px; }
 .chart p { color: var(--muted); padding: 17px 0; }
+.chart-picker { margin-top: 12px; }
+.chart-picker summary {
+  width: fit-content; min-height: 44px; padding: 10px 13px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--canvas);
+  color: var(--blue-dark); font-weight: 650; cursor: pointer;
+}
+.chart-selection-count { margin-left: 4px; color: var(--muted); font-size: .82rem; }
+.chart-picker-body { margin-top: 8px; padding: 8px 12px 12px; border: 1px solid var(--line); border-radius: 14px; }
+.chart-picker-actions { display: flex; flex-wrap: wrap; gap: 0 14px; }
+.chart-picker-actions button { padding-inline: 0; border-radius: 4px; background: transparent; color: var(--blue-dark); font-size: .84rem; }
+.chart-picker-actions button:hover { text-decoration: underline; }
+.chart-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr)); gap: 10px 16px; }
+.chart-option-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.chart-option-group legend { margin-bottom: 2px; font-size: .83rem; font-weight: 650; }
+.chart-option {
+  display: flex; align-items: center; gap: 8px; min-height: 44px;
+  padding: 6px 4px; border-radius: 8px; font-size: .83rem; cursor: pointer;
+}
+.chart-option:hover, .chart-option:focus-within { background: var(--canvas); }
+.chart-option input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
+.chart-option small { display: block; margin-top: 2px; color: var(--muted); }
+.chart-swatch { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+.chart-key { display: flex; flex-wrap: wrap; gap: 5px 14px; margin: 10px 0 0; padding: 0; list-style: none; }
+.chart-key li { display: flex; align-items: center; gap: 6px; font-size: .79rem; }
+.chart-caption:empty { display: none; }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .85rem; text-align: left; font-variant-numeric: tabular-nums; }
 th, td { padding: 9px 8px; border-bottom: 1px solid var(--line); }
@@ -340,6 +365,7 @@ tr:last-child td, tbody tr:last-child th { border-bottom: 0; }
   font-family: MTSText, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 .source-status { margin-top: 4px; color: var(--muted); font-size: .82rem; }
+.source-status:empty { margin-top: 0; }
 .data-refresh { background: transparent; color: var(--blue-dark); border-radius: 4px; padding-inline: 0; font-size: .88rem; }
 .data-refresh:hover { background: transparent; text-decoration: underline; }
 .directory-period { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: .85rem; }

@@ -82,10 +82,21 @@
         </aside>
         <div class="workspace-main">
           <section class="panel chart-panel" aria-labelledby="chart-heading" aria-describedby="chart-summary">
-            <h2 id="chart-heading">Понятность задач по месяцам</h2>
+            <h2 id="chart-heading">Динамика оценок по месяцам</h2>
+            <details class="chart-picker">
+              <summary>Показатели <span class="chart-selection-count"></span></summary>
+              <div class="chart-picker-body">
+                <div class="chart-picker-actions">
+                  <button type="button" data-chart-selection="all">Выбрать все</button>
+                  <button type="button" data-chart-selection="none">Снять выбор</button>
+                </div>
+                <div class="chart-options"></div>
+              </div>
+            </details>
             <p class="chart-caption" id="chart-summary">Оценки по шкале 1–5</p>
-            <a class="chart-table-link" href="#monthly">Значения графика в таблице</a>
+            <ul class="chart-key" aria-label="Показатели на графике" hidden></ul>
             <div class="chart" aria-hidden="true"></div>
+            <a class="chart-table-link" href="#monthly">Значения графика в таблице</a>
           </section>
           <section class="panel directory" id="intern-directory" tabindex="-1" aria-labelledby="directory-heading" hidden>
             <h2 id="directory-heading">Стажёры</h2>
