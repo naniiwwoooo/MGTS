@@ -12,13 +12,13 @@ import llm
 
 from . import dashboard
 from .dashboard import Snapshot
-from .models import Analysis, Metric
+from .models import Analysis
 
 PROMPT_INSTRUCTIONS = (
     "Ты HR-эксперт. Дай рекрутеру краткое заключение по подготовленным фактам, "
     "до 100 слов, без вопросов и заданий. Опиши главную динамику, опираясь на указанные направления. "
-    "Различай ответы стажёров и оценки наставников. Оценка готовности рекомендовать к найму "
-    "отражает мнение наставников. Не давай решения о найме. Не делай выводов о причинах "
+    "Различай ответы стажёров и оценки наставников по различным вопросам. "
+    "Не давай решения о найме. Не делай выводов о причинах "
     "и не утверждай, что тренд был устойчивым, если доступны только края периода. "
     "Не повторяй числа и даты: интерфейс показывает их отдельно. "
     "Не используй проценты, кратность и выражения вроде «вдвое» или «благодаря». "
@@ -93,10 +93,7 @@ class AnalysisService:
             else:
                 data = dashboard.profile(snapshot, intern_id)
                 scope = "Показатели одного стажёра."
-                metrics = [*data.metrics, Metric(
-                    label="Прогресс в обучении", source="Оценка наставников", scale=5,
-                    value=None, change=data.mentor_progress,
-                )]
+                metrics = data.metrics
 
             facts = []
             directions = []
@@ -123,6 +120,14 @@ class AnalysisService:
                 )
             if not facts:
                 raise ValueError("В опросах нет оценок для вывода")
+            if intern_id is not None:
+                facts.extend(f"Сигнал локальных правил: {signal.label} ({signal.detail})"
+                             for signal in data.signals[:6])
+            else:
+                with_signals = sum(bool(item.signals) for item in data.interns)
+                repeated = sum(any(signal.source == "feedback" for signal in item.signals) for item in data.interns)
+                facts.append(f"Стажеров с сигналами за весь период: {with_signals} из {data.intern_count}. "
+                             f"С повторяющимися темами в комментариях: {repeated}.")
             prompt = f"{PROMPT_INSTRUCTIONS}\n{scope}\n" + "\n".join(facts)
             async with self.provider_lock:
                 text = (await asyncio.to_thread(llm._call_model, prompt)).strip()

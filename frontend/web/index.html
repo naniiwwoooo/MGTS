@@ -12,7 +12,7 @@
   <a class="skip" href="#main">К содержанию</a>
   <header class="top">
     <div class="top-inner">
-      <a class="brand" href="/" data-route><strong>МГТС</strong><span>Стажёрская программа</span></a>
+      <a class="brand" href="/" data-route><img src="/assets/brand/mgts.svg" alt="МГТС" width="30" height="30"><span>Стажёрская программа</span></a>
     </div>
   </header>
   <div class="shell">
@@ -36,17 +36,19 @@
       <header class="page-header">
         <h1></h1>
         <p class="page-meta"></p>
+        <p class="source-status" role="status"></p>
         <nav class="page-jumps" aria-label="На этой странице">
           <a class="directory-jump" href="#intern-directory" hidden>К списку стажёров ↓</a>
+          <button type="button" class="data-refresh">Обновить данные</button>
           <a href="#monthly">К таблице оценок ↓</a>
         </nav>
       </header>
       <div>
         <section class="metric-grid" aria-label="Ключевые показатели"></section>
-        <p class="rating-guide">Цвет показывает долю от максимального балла: красный — ниже 60%, янтарный — от 60% до 80% не включительно, зелёный — от 80%.</p>
+        <p class="rating-guide">Светофор оценок: красный — до 2 баллов, янтарный — выше 2 и ниже 4, зелёный — от 4.</p>
       </div>
       <div class="page-grid">
-        <div class="insights">
+        <aside class="insights" aria-label="Выводы и помощник">
           <section class="panel analysis-panel" aria-labelledby="analysis-heading">
             <h2 id="analysis-heading"></h2>
             <p class="analysis-period"></p>
@@ -57,23 +59,65 @@
               <ul></ul>
             </div>
           </section>
-          <section class="panel fresh-feedback" hidden>
+          <section class="panel fresh-feedback" id="fresh-feedback" tabindex="-1" hidden>
             <h2>Последний отзыв наставника</h2>
           </section>
+          <section class="panel rail-chart" aria-labelledby="rail-chart-heading" hidden>
+            <h2 id="rail-chart-heading">Сдача анкет по месяцам</h2>
+            <p class="chart-caption"></p>
+            <div class="chart" aria-hidden="true"></div>
+          </section>
+          <section class="panel assistant-card" aria-labelledby="assistant-heading">
+            <div class="assistant-header">
+              <h2 id="assistant-heading">Спросить по данным</h2>
+              <button type="button" class="assistant-open" aria-haspopup="dialog">Открыть чат</button>
+            </div>
+            <p class="assistant-scope"></p>
+            <form class="assistant-launch">
+              <label class="visually-hidden" for="assistant-quick-question">Вопрос по данным программы</label>
+              <input id="assistant-quick-question" maxlength="320" required placeholder="Например, как изменился прогресс?">
+              <button type="submit" aria-label="Задать вопрос в чате">↑</button>
+            </form>
+          </section>
+        </aside>
+        <div class="workspace-main">
+          <section class="panel chart-panel" aria-labelledby="chart-heading" aria-describedby="chart-summary">
+            <h2 id="chart-heading">Понятность задач по месяцам</h2>
+            <p class="chart-caption" id="chart-summary">Оценки по шкале 1–5</p>
+            <a class="chart-table-link" href="#monthly">Значения графика в таблице</a>
+            <div class="chart" aria-hidden="true"></div>
+          </section>
+          <section class="panel directory" id="intern-directory" tabindex="-1" aria-labelledby="directory-heading" hidden>
+            <h2 id="directory-heading">Стажёры</h2>
+            <div class="directory-period">
+              <label for="coverage-month">Статус анкет за месяц</label>
+              <select id="coverage-month"></select>
+            </div>
+            <div class="directory-list"></div>
+          </section>
         </div>
-        <section class="panel chart-panel" aria-labelledby="chart-heading" aria-describedby="chart-summary">
-          <h2 id="chart-heading">Удовлетворённость по месяцам</h2>
-          <p class="chart-caption" id="chart-summary">Оценки по шкале 1–5</p>
-          <a class="chart-table-link" href="#monthly">Значения графика в таблице</a>
-          <div class="chart" aria-hidden="true"></div>
-        </section>
       </div>
-      <section class="panel directory" id="intern-directory" tabindex="-1" aria-labelledby="directory-heading" hidden>
-        <h2 id="directory-heading">Стажёры</h2>
-        <p>Последние оценки по каждому стажёру</p>
-        <div class="directory-list"></div>
+      <button type="button" class="assistant-mobile" aria-haspopup="dialog">ИИ-помощник</button>
+      <dialog class="assistant-dialog" aria-labelledby="assistant-dialog-title">
+        <header class="assistant-dialog-header">
+          <div><h2 id="assistant-dialog-title">Помощник по данным</h2><p class="assistant-scope"></p></div>
+          <button type="button" class="assistant-close" aria-label="Закрыть чат">×</button>
+        </header>
+        <div class="assistant-suggestions" aria-label="Примеры вопросов"></div>
+        <div class="assistant-messages" role="log" aria-label="Переписка" tabindex="0"></div>
+        <p class="assistant-status" role="status"></p>
+        <form class="assistant-form">
+          <label class="visually-hidden" for="assistant-question">Ваш вопрос</label>
+          <input id="assistant-question" maxlength="320" required placeholder="Вопрос об оценках или отзывах">
+          <button type="submit">Отправить</button>
+        </form>
+      </dialog>
+      <section class="panel profile-monitor" aria-labelledby="monitor-heading" hidden>
+        <h2 id="monitor-heading">Анкеты и сигналы</h2>
+        <div class="profile-coverage"></div>
+        <ul class="profile-signals"></ul>
       </section>
-      <section class="panel feedback" aria-labelledby="feedback-heading" hidden>
+      <section class="panel feedback" id="feedback" tabindex="-1" aria-labelledby="feedback-heading" hidden>
         <h2 id="feedback-heading">Комментарии по месяцам</h2>
         <div class="feedback-columns">
           <div><h3>Стажёр</h3><div class="comment-list intern-comments"></div></div>
@@ -86,7 +130,7 @@
       </section>
       <section class="panel monthly" id="monthly" tabindex="-1" aria-labelledby="monthly-heading">
         <h2 id="monthly-heading">Все показатели по месяцам</h2>
-        <p class="chart-caption">Прочерк означает, что оценки за этот месяц нет.</p>
+        <p class="chart-caption">Число под значением — сколько ответов вошло в расчёт. Прочерк означает, что оценок нет.</p>
         <div class="table-scroll" role="region" aria-label="Помесячная таблица оценок" tabindex="0"></div>
       </section>
     </div>

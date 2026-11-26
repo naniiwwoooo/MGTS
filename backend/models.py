@@ -3,28 +3,24 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Point(BaseModel):
     month: int
     value: float | None
-
-
-class Observation(Point):
     responses: int
 
 
 class Change(BaseModel):
-    first: Observation
-    latest: Observation
+    first: Point
+    latest: Point
 
 
 class Metric(BaseModel):
     label: str
     value: float | None
-    scale: int | None = None
-    unit: str | None = None
+    scale: int = 5
     source: str
     month: int | None = None
     change: Change | None = None
@@ -38,70 +34,73 @@ class Series(BaseModel):
 class Chart(BaseModel):
     id: str
     label: str
-    scale: tuple[int, int] | None = None
+    scale: tuple[int, int] = (1, 5)
     unit: str | None = None
     series: list[Series]
 
 
+class Coverage(BaseModel):
+    month: int
+    intern_submitted: bool
+    mentor_submitted: bool
+    submitted_mentors: list[str] = Field(default_factory=list)
+    pending_mentors: list[str] = Field(default_factory=list)
+
+
+class Signal(BaseModel):
+    level: Literal["attention", "critical"]
+    label: str
+    detail: str
+    months: list[int]
+    source: Literal["monthly", "feedback"]
+
+
 class InternSummary(BaseModel):
     id: str
-    month: int
+    department: str
     satisfaction: float | None
-    readiness: float | None
-    mentor_month: int | None
-    progress: Change | None = None
+    coverage: list[Coverage]
+    signals: list[Signal]
 
 
 class Comment(BaseModel):
     month: int
-    mentor: str
+    author: str
+    question: str
     text: str
 
 
-class InternComment(BaseModel):
-    month: int
-    text: str
+class SyncStatus(BaseModel):
+    state: Literal["history", "connected", "error"] = "history"
+    checked_at: datetime | None = None
+    detail: str | None = None
 
 
-class RatingGroup(BaseModel):
-    label: str
-    count: int
-
-
-class ProfileAxis(BaseModel):
-    label: str
-    first: float | None
-    last: float | None
-
-
-class Overview(BaseModel):
+class DashboardData(BaseModel):
     data_version: str
     first_month: int
     last_month: int
+    metrics: list[Metric]
+    charts: list[Chart]
+    sync: SyncStatus
+
+
+class Overview(DashboardData):
     intern_count: int
     mentor_count: int
     response_count: int
     intern_responses: int
     mentor_responses: int
-    metrics: list[Metric]
-    charts: list[Chart]
     interns: list[InternSummary]
-    readiness_distribution: list[RatingGroup]
 
 
-class Profile(BaseModel):
-    data_version: str
+class Profile(DashboardData):
     id: str
-    month: int
-    first_month: int
-    last_month: int
-    metrics: list[Metric]
-    charts: list[Chart]
+    department: str
+    coverage: list[Coverage]
+    signals: list[Signal]
     comments: list[Comment]
-    intern_comments: list[InternComment]
-    mentor_progress: Change | None = None
-    response_profile: list[ProfileAxis]
-    response_months: tuple[int, int]
+    intern_comments: list[Comment]
 
 
 class Analysis(BaseModel):

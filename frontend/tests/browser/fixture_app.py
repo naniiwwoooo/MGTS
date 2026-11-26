@@ -1,5 +1,6 @@
 """Локальное приложение для браузерных тестов с тестовым ответом модели."""
 
+import os
 import socket
 
 import uvicorn
@@ -15,6 +16,8 @@ def example_analysis(prompt: str) -> str:
 
 
 if __name__ == "__main__":
+    for name in ("MGTS_GOOGLE_INTERN_SHEET_ID", "MGTS_GOOGLE_MENTOR_SHEET_ID"):
+        os.environ.pop(name, None)
     llm.llm_available = lambda: True
     llm._call_model = example_analysis
     with socket.socket() as listener:

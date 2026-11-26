@@ -39,7 +39,7 @@ DEFAULT_PROMPT_HEADER = (
 
 INTERN_PROMPT_HEADER = (
     "Ты — аналитик HR-данных. Ниже результаты опроса конкретного стажёра за "
-    "6 месяцев, оценки наставников и их комментарии. Напиши краткое общее "
+    "доступный период и оценки наставников. Напиши краткое общее "
     "впечатление о стажёре: динамика, сильные стороны, зоны роста и "
     "рекомендации наставнику. Пиши по-русски, дружелюбно и по делу."
 )
@@ -102,77 +102,21 @@ def llm_available() -> bool:
 
 
 def build_context(intern_df: pd.DataFrame, mentor_df: pd.DataFrame) -> str:
-    """Формирует текстовый контекст для модели из обеих таблиц."""
-    metrics = dl.overall_metrics(intern_df, mentor_df)
-    lines = [
-        "Сводные показатели:",
-        f"- Стажёров: {metrics['interns']}, наставников: {metrics['mentors']}, месяцев: {metrics['months']}",
-        f"- Средняя удовлетворённость стажёров: {metrics['intern_satisfaction']}/5",
-        f"- Средняя удовлетворённость наставников: {metrics['mentor_satisfaction']}/5",
-        f"- Средний балл готовности рекомендовать программу: {metrics['avg_nps']}/10",
-        f"- Средний прогресс (оценка наставников): {metrics['avg_progress']}/5",
-        f"- Средняя готовность к найму: {metrics['hire_readiness']}/10",
-        f"- Суммарные часы наставничества: {metrics['mentor_hours']}",
-        "",
-        "Средние ответы стажёров по месяцам:",
+    """Помесячные оценки без идентификаторов и исходных комментариев."""
+    return "\n".join([
+        "Сводные показатели: ответы стажеров (1–5)",
         dl.monthly_mean(intern_df, dl.INTERN_METRICS).round(2).to_string(index=False),
-        "",
-        "Средние оценки наставников по месяцам:",
-        dl.monthly_mean(mentor_df, dl.MENTOR_METRICS + [dl.HIRE_READINESS]).round(2).to_string(index=False),
-    ]
-    return "\n".join(lines)
+        "Оценки наставников (1–5)",
+        dl.monthly_mean(mentor_df, dl.MENTOR_METRICS).round(2).to_string(index=False),
+    ])
 
 
 def build_prompt(intern_df: pd.DataFrame, mentor_df: pd.DataFrame) -> str:
     return f"{DEFAULT_PROMPT_HEADER}\n\n{build_context(intern_df, mentor_df)}"
 
 
-def build_intern_context(
-    intern_df: pd.DataFrame, mentor_df: pd.DataFrame, intern_id: str
-) -> str:
-    """Формирует текстовый контекст по конкретному стажёру.
-
-    Включает ответы стажёра по месяцам, средние значения, оценки наставников
-    и их комментарии.
-    """
-    timeline = dl.intern_timeline(intern_df, intern_id)
-    if timeline.empty:
-        return f"Стажёр: {intern_id}\nНет данных опроса по этому стажёру."
-
-    averages = timeline[dl.INTERN_METRICS].mean()
-    avg_nps = timeline[dl.NPS].mean()
-
-    lines = [
-        f"Стажёр: {intern_id}",
-        "",
-        "Средние ответы стажёра за доступные месяцы (1–5, балл рекомендации 0–10):",
-        *[f"- {metric}: {averages[metric]:.2f}/5" for metric in dl.INTERN_METRICS],
-        f"- Готовность рекомендовать программу: {avg_nps:.1f}/10",
-        "",
-        "Ответы стажёра по месяцам:",
-        timeline[[dl.MONTH, *dl.INTERN_METRICS, dl.NPS]].round(2).to_string(index=False),
-    ]
-
-    mentor_tl = dl.mentor_timeline(mentor_df, intern_id)
-    if not mentor_tl.empty:
-        lines += [
-            "",
-            "Оценки наставников по месяцам:",
-            mentor_tl[[dl.MONTH, "Прогресс стажёра", dl.HIRE_READINESS]]
-            .round(2)
-            .to_string(index=False),
-        ]
-
-    comments = dl.mentor_comments(mentor_df, intern_id)
-    if not comments.empty:
-        lines += ["", "Комментарии наставников:"]
-        for _, item in comments.iterrows():
-            lines.append(
-                f"- Месяц {int(item[dl.MONTH])}, наставник {item[dl.MENTOR_ID]}: "
-                f"{item[dl.COMMENT]}"
-            )
-
-    return "\n".join(lines)
+def build_intern_context(intern_df: pd.DataFrame, mentor_df: pd.DataFrame, intern_id: str) -> str:
+    return build_context(dl.intern_timeline(intern_df, intern_id), dl.mentor_timeline(mentor_df, intern_id))
 
 
 def build_intern_prompt(
@@ -428,7 +372,7 @@ def generate_overall_impression(
             "AI-анализ появится позже. "
             f"Уже сейчас видно: {metrics['interns']} стажёров и {metrics['mentors']} наставников "
             f"прошли {metrics['months']} месяцев программы. Средняя удовлетворённость стажёров — "
-            f"{metrics['intern_satisfaction']}/5, готовность к найму — {metrics['hire_readiness']}/10."
+            f"{metrics['intern_satisfaction']:.2f}/5."
         )
 
     try:
@@ -452,8 +396,7 @@ def generate_intern_impression(
 ) -> str:
     """Возвращает общее впечатление ИИ о конкретном стажёре.
 
-    Передаёт модели ответы стажёра по месяцам, оценки наставников и их
-    комментарии. Результат кэшируется; при любой ошибке возвращается понятная
+    Передаёт модели помесячные значения оценок стажера и наставников. Результат кэшируется; при любой ошибке возвращается понятная
     строка, чтобы дашборд не падал.
     """
     if not llm_available():

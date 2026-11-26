@@ -9,17 +9,21 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import dashboard, surveys
+from . import assistant, dashboard, surveys
 from .analysis import AnalysisService
+from .google_forms import FormsSync
 from .models import Analysis, Overview, Profile
 
 WEB = Path(__file__).resolve().parent.parent / "frontend" / "web"
 PLOTLY = Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
 
 
+forms = FormsSync()
+
+
 def get_snapshot() -> dashboard.Snapshot:
     try:
-        return dashboard.read_snapshot(dashboard.current_version())
+        return forms.update(dashboard.read_snapshot(dashboard.current_version()))
     except surveys.SurveyDataError as exc:
         raise HTTPException(503, str(exc)) from exc
     except Exception as exc:
@@ -59,6 +63,10 @@ def create_app() -> FastAPI:
     def page(intern_id: str | None = None):
         return FileResponse(WEB / "index.html")
 
+    @app.get("/api/data-status")
+    def data_status(snapshot: Snapshot):
+        return {"data_version": snapshot.data_version, "sync": snapshot.sync}
+
     @app.get("/api/overview")
     def overview(snapshot: Snapshot) -> Overview:
         return dashboard.overview(snapshot)
@@ -85,6 +93,17 @@ def create_app() -> FastAPI:
     async def analyze_profile(snapshot: AnalysisSnapshot, intern_id: str, refresh: bool = True) -> Analysis:
         require_intern(snapshot, intern_id)
         return analysis.start(snapshot, intern_id, refresh)
+
+    @app.post("/api/assistant/overview")
+    async def overview_assistant(snapshot: Snapshot, message: assistant.Question) -> assistant.Answer:
+        expected = analysis_snapshot(snapshot, message.version)
+        return await assistant.answer_question(expected, None, message, analysis.provider_lock)
+
+    @app.post("/api/interns/{intern_id}/assistant")
+    async def profile_assistant(snapshot: Snapshot, intern_id: str, message: assistant.Question) -> assistant.Answer:
+        expected = analysis_snapshot(snapshot, message.version)
+        require_intern(expected, intern_id)
+        return await assistant.answer_question(expected, intern_id, message, analysis.provider_lock)
 
     return app
 

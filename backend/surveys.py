@@ -1,209 +1,140 @@
-"""Загрузка и подготовка данных опросов для дашборда.
-
-Данные читаются из Excel-файлов в папке ``data`` через модуль
-``data.read_excel`` (``load_excel``), чтобы дашборд и остальной проект
-использовали единый способ чтения таблиц.
-"""
-
-from __future__ import annotations
+"""Общая схема для исторических книг и таблиц ответов Google Forms."""
 
 from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent.parent
-
 from data.read_excel import load_excel
 
-DATA_DIR = ROOT / "data"
-INTERN_FILE = DATA_DIR / "intern_survey.xlsx"
-MENTOR_FILE = DATA_DIR / "mentor_survey.xlsx"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+INTERN_FILE = DATA_DIR / "interns.xlsx"
+MENTOR_FILE = DATA_DIR / "mentors.xlsx"
+INTERN_SHEET = "Ответы стажеров"
+MENTOR_SHEET = "Оценки наставников"
 
-INTERN_ID = "ID стажёра"
+INTERN_ID = "ID стажера"
 MENTOR_ID = "ID наставника"
-MONTH = "Месяц"
-NPS = "NPS"
-HIRE_READINESS = "Готовность к найму"
-HOURS = "Затраченное время (ч)"
-COMMENT = "Комментарий"
+MONTH = "Контрольный период"
+DEPARTMENT = "Подразделение / направление стажировки"
 
+CLARITY = "Понятность задач"
+SATISFACTION = "Общая удовлетворенность стажировкой"
+DEVELOPMENT = "Профессиональное развитие"
+EXPECTATIONS = "Понимание задач и ожиданий"
+QUALITY = "Качество выполнения задач"
 INTERN_METRICS = [
-    "Удовлетворённость",
-    "Нагрузка",
-    "Ясность задач",
-    "Поддержка наставника",
-    "Прогресс в обучении",
-    "Мотивация",
+    CLARITY, "Поддержка и обратная связь наставника", "Комфортность нагрузки",
+    "Интерес к задачам", DEVELOPMENT, "Взаимодействие с командой", SATISFACTION,
 ]
 MENTOR_METRICS = [
-    "Удовлетворённость",
-    "Прогресс стажёра",
-    "Качество материалов",
-    "Поддержка компании",
+    EXPECTATIONS, QUALITY, "Самостоятельность", "Соблюдение сроков и организация работы",
+    "Вовлеченность и инициативность", "Взаимодействие с наставником и командой",
 ]
-
-INTERN_COLUMNS = [INTERN_ID, MONTH, *INTERN_METRICS, NPS, COMMENT]
-MENTOR_COLUMNS = [
-    MENTOR_ID,
-    INTERN_ID,
-    MONTH,
-    *MENTOR_METRICS,
-    HOURS,
-    HIRE_READINESS,
-    COMMENT,
-]
+INTERN_NOTES = ["Сложности за период", "Что мешает работать и развиваться"]
+MENTOR_NOTES = ["Комментарий о работе за период", "Сложности / ситуации для внимания"]
+INTERN_COLUMNS = [INTERN_ID, DEPARTMENT, MONTH, *INTERN_METRICS, *INTERN_NOTES]
+MENTOR_COLUMNS = [MENTOR_ID, INTERN_ID, DEPARTMENT, MONTH, *MENTOR_METRICS, *MENTOR_NOTES]
 
 
 class SurveyDataError(ValueError):
-    """Ошибку можно показать пользователю без значений из анкеты."""
+    """Ошибку можно показать пользователю без содержимого строки."""
 
 
-def _invalid(path: Path, invalid: pd.Series, message: str) -> None:
-    if invalid.any():
-        row = invalid[invalid].index[0] + 2
-        raise SurveyDataError(f"{path.name}, строка {row}. {message}")
+def normalize(data: pd.DataFrame, origin: str, *, mentor: bool, live: bool = False) -> pd.DataFrame:
+    columns = MENTOR_COLUMNS if mentor else INTERN_COLUMNS
+    fields = [INTERN_ID, DEPARTMENT, *([MENTOR_ID] if mentor else [])]
+    metrics = MENTOR_METRICS if mentor else INTERN_METRICS
+    entries = data.rename(columns=lambda name: " ".join(str(name).strip().split()).replace("ё", "е"))
+    absent = [column for column in columns if column not in entries]
+    if absent:
+        raise SurveyDataError(f"{origin}. Отсутствуют колонки: {', '.join(absent)}.")
+    if entries.columns.duplicated().any():
+        raise SurveyDataError(f"{origin}. Найдены повторяющиеся заголовки.")
+    entries = entries.loc[:, columns].copy().replace(r"^\s*$", pd.NA, regex=True).dropna(how="all")
+
+    def invalid(mask: pd.Series, message: str) -> None:
+        if mask.any():
+            raise SurveyDataError(f"{origin}, строка {mask[mask].index[0] + 2}. {message}")
+
+    for field in fields:
+        entries[field] = entries[field].astype("string").str.strip()
+        invalid(entries[field].isna(), f"Заполните колонку «{field}».")
+    invalid(~entries[INTERN_ID].str.fullmatch(r"[\w-]+"), "ID стажера должен состоять из букв, цифр, дефиса или подчёркивания.")
+    raw_month = entries[MONTH].astype("string").str.strip().str.replace(r"(?i)^месяц\s+", "", regex=True)
+    months = pd.to_numeric(raw_month, errors="coerce")
+    invalid(~months.isin(range(1, 7)), "Укажите контрольный месяц от 1 до 6.")
+    entries[MONTH] = months.astype(int)
+    for field in metrics:
+        values = pd.to_numeric(entries[field], errors="coerce")
+        invalid(entries[field].notna() & ~values.isin(range(1, 6)), f"«{field}» допускает целые оценки от 1 до 5.")
+        entries[field] = values.astype(float)
+    keys = record_keys(mentor)
+    if live:
+        entries = entries.drop_duplicates(keys, keep="last")
+    else:
+        invalid(entries.duplicated(keys), "Повторная анкета за один контрольный период.")
+    return entries.sort_values(keys).reset_index(drop=True)
 
 
-def _load(path: Path, expected_columns: list[str]) -> pd.DataFrame:
+def record_keys(mentor: bool) -> list[str]:
+    return [INTERN_ID, MONTH, *([MENTOR_ID] if mentor else [])]
+
+
+def load_workbook(path: Path, sheet: str, *, mentor: bool) -> pd.DataFrame:
     try:
-        df = load_excel(path, sheet_name="Данные")
+        frame = load_excel(path, sheet_name=sheet)
     except (OSError, ValueError) as exc:
-        raise SurveyDataError(f"{path.name}. Проверьте, доступен ли файл и есть ли в нём лист «Данные».") from exc
-    missing = [col for col in expected_columns if col not in df.columns]
-    if missing:
-        raise SurveyDataError(f"{path.name}. Отсутствуют колонки {', '.join(missing)}.")
-
-    mentor = MENTOR_ID in expected_columns
-    keys = [MENTOR_ID, INTERN_ID] if mentor else [INTERN_ID]
-    for key in keys:
-        identifiers = df[key].astype("string").str.strip()
-        _invalid(path, identifiers.isna() | identifiers.eq(""), f"Заполните колонку «{key}».")
-        df[key] = identifiers
-
-    months = pd.to_numeric(df[MONTH], errors="coerce")
-    _invalid(path, ~months.isin(range(1, 7)), "Номер месяца должен быть целым числом от 1 до 6.")
-    df[MONTH] = months.astype(int)
-    _invalid(path, df.duplicated([*keys, MONTH]), "В опросе есть повторная строка для этого месяца.")
-
-    limits = {name: (1, 5) for name in (MENTOR_METRICS if mentor else INTERN_METRICS)}
-    limits.update({HOURS: (0, float("inf")), HIRE_READINESS: (0, 10)} if mentor else {NPS: (0, 10)})
-    for name, (lower, upper) in limits.items():
-        values = pd.to_numeric(df[name], errors="coerce")
-        out_of_range = ~values.between(lower, upper) | values.eq(float("inf"))
-        _invalid(path, df[name].notna() & out_of_range, f"Проверьте значение в колонке «{name}».")
-        df[name] = values
-
-    return df.sort_values([*keys, MONTH]).reset_index(drop=True)
+        raise SurveyDataError(f"{path.name}. Проверьте наличие файла и листа «{sheet}».") from exc
+    return normalize(frame, path.name, mentor=mentor)
 
 
 def load_intern_data() -> pd.DataFrame:
-    return _load(INTERN_FILE, INTERN_COLUMNS)
+    return load_workbook(INTERN_FILE, INTERN_SHEET, mentor=False)
 
 
 def load_mentor_data() -> pd.DataFrame:
-    return _load(MENTOR_FILE, MENTOR_COLUMNS)
+    return load_workbook(MENTOR_FILE, MENTOR_SHEET, mentor=True)
+
+
+def validate_roster(interns: pd.DataFrame, mentors: pd.DataFrame) -> None:
+    if interns.empty:
+        raise SurveyDataError("В истории должна быть хотя бы одна анкета стажера.")
+    combined = pd.concat([interns[[INTERN_ID, DEPARTMENT]], mentors[[INTERN_ID, DEPARTMENT]]])
+    if not mentors[INTERN_ID].isin(interns[INTERN_ID]).all():
+        raise SurveyDataError("В оценках наставников найден ID, которого нет в истории стажеров.")
+    if combined.groupby(INTERN_ID)[DEPARTMENT].nunique().gt(1).any():
+        raise SurveyDataError("В анкетах одного стажера указаны разные подразделения.")
 
 
 def load_all() -> tuple[pd.DataFrame, pd.DataFrame]:
     interns, mentors = load_intern_data(), load_mentor_data()
-    if interns.empty:
-        raise SurveyDataError(f"{INTERN_FILE.name}. Добавьте хотя бы одну анкету стажёра.")
-    if not mentors[INTERN_ID].isin(interns[INTERN_ID]).all():
-        raise SurveyDataError(f"{MENTOR_FILE.name}. Найдены ID стажёров, которых нет в {INTERN_FILE.name}.")
+    validate_roster(interns, mentors)
     return interns, mentors
 
 
-def intern_ids(intern_df: pd.DataFrame) -> list[str]:
-    return sorted(intern_df[INTERN_ID].unique().tolist())
+def intern_ids(data: pd.DataFrame) -> list[str]:
+    return sorted(data[INTERN_ID].unique().tolist())
 
 
-def mentor_ids(mentor_df: pd.DataFrame) -> list[str]:
-    return sorted(mentor_df[MENTOR_ID].unique().tolist())
+def mentor_ids(data: pd.DataFrame) -> list[str]:
+    return sorted(data[MENTOR_ID].unique().tolist())
 
 
-def overall_metrics(intern_df: pd.DataFrame, mentor_df: pd.DataFrame) -> dict[str, float]:
-    """Ключевые показатели в целом по обеим таблицам."""
+def intern_timeline(data: pd.DataFrame, intern_id: str) -> pd.DataFrame:
+    return data.loc[data[INTERN_ID] == intern_id].sort_values(MONTH, kind="stable")
+
+
+def mentor_timeline(data: pd.DataFrame, intern_id: str) -> pd.DataFrame:
+    return intern_timeline(data, intern_id)
+
+
+def monthly_mean(data: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    return data.groupby(MONTH, as_index=False)[columns].mean()
+
+
+def overall_metrics(interns: pd.DataFrame, mentors: pd.DataFrame) -> dict:
     return {
-        "interns": int(intern_df[INTERN_ID].nunique()),
-        "mentors": int(mentor_df[MENTOR_ID].nunique()),
-        "months": int(intern_df[MONTH].nunique()),
-        "responses": int(len(intern_df) + len(mentor_df)),
-        "intern_satisfaction": round(float(intern_df["Удовлетворённость"].mean()), 2),
-        "mentor_satisfaction": round(float(mentor_df["Удовлетворённость"].mean()), 2),
-        "avg_nps": round(float(intern_df[NPS].mean()), 1),
-        "avg_progress": round(float(mentor_df["Прогресс стажёра"].mean()), 2),
-        "hire_readiness": round(float(mentor_df[HIRE_READINESS].mean()), 1),
-        "mentor_hours": round(float(mentor_df[HOURS].sum()), 1),
+        "interns": len(intern_ids(interns)), "mentors": len(mentor_ids(mentors)),
+        "months": interns[MONTH].nunique(), "responses": len(interns) + len(mentors),
+        "intern_satisfaction": interns[SATISFACTION].mean(),
     }
-
-
-def monthly_mean(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
-    """Средние значения метрик по месяцам."""
-    return df.groupby(MONTH, as_index=False)[columns].mean().sort_values(MONTH)
-
-
-def intern_summary(intern_df: pd.DataFrame) -> pd.DataFrame:
-    """Средние ответы каждого стажёра за все месяцы."""
-    summary = (
-        intern_df.groupby(INTERN_ID, as_index=False)[[*INTERN_METRICS, NPS]]
-        .mean()
-        .round(2)
-        .sort_values(INTERN_ID)
-        .reset_index(drop=True)
-    )
-    return summary
-
-
-def intern_timeline(intern_df: pd.DataFrame, intern_id: str) -> pd.DataFrame:
-    """Динамика ответов одного стажёра по месяцам."""
-    return (
-        intern_df[intern_df[INTERN_ID] == intern_id]
-        .sort_values(MONTH)
-        .reset_index(drop=True)
-    )
-
-
-def mentor_timeline(mentor_df: pd.DataFrame, intern_id: str) -> pd.DataFrame:
-    """Динамика оценок наставника по конкретному стажёру."""
-    return (
-        mentor_df[mentor_df[INTERN_ID] == intern_id]
-        .sort_values(MONTH)
-        .reset_index(drop=True)
-    )
-
-
-def mentor_comments(mentor_df: pd.DataFrame, intern_id: str) -> pd.DataFrame:
-    """Комментарии наставника по конкретному стажёру."""
-    cols = [MENTOR_ID, MONTH, "Прогресс стажёра", HIRE_READINESS, COMMENT]
-    return (
-        mentor_df[mentor_df[INTERN_ID] == intern_id][cols]
-        .sort_values(MONTH)
-        .reset_index(drop=True)
-    )
-
-
-def radar_profile(intern_df: pd.DataFrame, intern_id: str) -> tuple[list[str], list[float], list[float]]:
-    """Профиль компетенций стажёра: первый и последний месяц."""
-    timeline = intern_timeline(intern_df, intern_id)
-    first = timeline.iloc[0]
-    last = timeline.iloc[-1]
-    return (
-        INTERN_METRICS,
-        [float(first[m]) for m in INTERN_METRICS],
-        [float(last[m]) for m in INTERN_METRICS],
-    )
-
-
-def team_radar(intern_df: pd.DataFrame) -> tuple[list[str], list[float]]:
-    """Средний профиль компетенций по всем стажёрам."""
-    means = intern_df[INTERN_METRICS].mean()
-    return INTERN_METRICS, [float(means[m]) for m in INTERN_METRICS]
-
-
-def latest_snapshot(intern_df: pd.DataFrame, intern_id: str) -> dict[str, float]:
-    """Последние (самые свежие) значения метрик стажёра."""
-    last = intern_timeline(intern_df, intern_id).iloc[-1]
-    snapshot = {m: float(last[m]) for m in INTERN_METRICS}
-    snapshot[NPS] = float(last[NPS])
-    snapshot[MONTH] = int(last[MONTH])
-    return snapshot

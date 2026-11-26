@@ -1,3 +1,5 @@
+import { renderAssistant } from "./assistant.js";
+
 const main = document.querySelector("main");
 const directoryNav = document.querySelector("#intern-navigation");
 const mobileIntern = document.querySelector("#mobile-intern");
@@ -40,19 +42,9 @@ const palette = {
 
 function rating(value, scale) {
   if (value === null || !scale) return null;
-  if (value / scale < .6) return { tone: "rose", label: "Низкая оценка" };
-  if (value / scale < .8) return { tone: "amber", label: "Средняя оценка" };
+  if (value <= 2) return { tone: "rose", label: "Низкая оценка" };
+  if (value < 4) return { tone: "amber", label: "Средняя оценка" };
   return { tone: "green", label: "Высокая оценка" };
-}
-
-function coloredScore(value, scale) {
-  const quality = rating(value, scale);
-  const mark = element("span", score(value, scale), "score-pill");
-  if (quality) {
-    mark.dataset.tone = quality.tone;
-    mark.title = quality.label;
-  }
-  return mark;
 }
 
 function month(value) {
@@ -115,6 +107,13 @@ function renderMetrics(page, metrics, isProfile) {
     const subtitle = latest ? metric.source + " · мес. " + latest.month + " · " + responseLabel(latest.responses)
       : metric.source + " · нет оценки";
     const quality = rating(measured, metric.scale);
+    if (metric.change && metric.change.first.month !== latest.month) {
+      const delta = Number((latest.value - metric.change.first.value).toFixed(2));
+      const badge = element("small", (delta > 0 ? "+" : "") + format.format(delta), "metric-delta");
+      badge.dataset.direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+      badge.title = "Изменение в баллах к первой доступной оценке";
+      value.append(badge);
+    }
     if (quality) card.dataset.tone = quality.tone;
     card.append(element("h2", metric.label), value, element("p", subtitle));
     card.append(element("p", changeLabel(metric.change), "metric-change"));
@@ -122,39 +121,81 @@ function renderMetrics(page, metrics, isProfile) {
   }
 }
 
+function submission(submitted) {
+  const mark = element("span", submitted ? "Сдана" : "Нет ответа", "submission");
+  mark.dataset.submitted = String(submitted);
+  return mark;
+}
+
 function renderDirectory(page, interns) {
   page.querySelector(".directory").hidden = false;
   page.querySelector(".directory-jump").hidden = false;
   const list = page.querySelector(".directory-list");
-  const heading = element("div", undefined, "directory-header");
-  heading.setAttribute("aria-hidden", "true");
-  for (const title of ["Стажёр", "Оценка программы", "Рекомендация к найму", "Прогресс по оценке наставников"]) {
-    heading.append(element("span", title));
+  const select = page.querySelector("#coverage-month");
+  for (let month = 1; month <= 6; month++) select.add(new Option("Месяц " + month, month));
+  select.value = String(Math.max(1, ...interns.flatMap(item => item.coverage
+    .filter(check => check.intern_submitted || check.mentor_submitted).map(check => check.month))));
+  function update() {
+    const period = Number(select.value);
+    const heading = element("div", undefined, "directory-header");
+    heading.setAttribute("aria-hidden", "true");
+    for (const title of ["Стажер", "Анкета стажера", "Анкета наставника", "Статус"]) {
+      heading.append(element("span", title));
+    }
+    list.replaceChildren(heading);
+    for (const intern of interns) {
+      const checks = intern.coverage.find(item => item.month === period);
+      const alerts = intern.signals.filter(item => item.months.includes(period));
+      const row = link(undefined, internPath(intern.id), "directory-row");
+      const identity = element("div");
+      identity.append(element("strong", intern.id), element("small", intern.department));
+      const own = element("div");
+      own.append(element("small", "Анкета стажера", "row-label"), submission(checks.intern_submitted));
+      const mentor = element("div");
+      mentor.append(element("small", "Анкета наставника", "row-label"), submission(checks.mentor_submitted));
+      if (checks.submitted_mentors.length) mentor.append(element("small", checks.submitted_mentors.join(", ")));
+      if (checks.pending_mentors.length) mentor.append(element("small", "Нет ответа: " + checks.pending_mentors.join(", ")));
+      const status = element("div", undefined, "row-progress");
+      const urgent = alerts.some(item => item.level === "critical");
+      const text = urgent ? "Критичный сигнал" : alerts.length ? "Зона внимания" :
+        checks.intern_submitted && checks.mentor_submitted && !checks.pending_mentors.length ? "Сигналов нет" : "Данные неполные";
+      const badge = element("span", text, "signal-badge");
+      badge.dataset.level = urgent ? "critical" : alerts.length ? "attention" : "clear";
+      status.append(badge);
+      if (alerts.length) status.append(element("small", alerts[0].label));
+      const arrow = element("span", "›");
+      arrow.setAttribute("aria-hidden", "true");
+      row.append(identity, own, mentor, status, arrow);
+      list.append(row);
+    }
   }
-  list.append(heading);
-  for (const intern of interns) {
-    const row = link(undefined, internPath(intern.id), "directory-row");
-    const identity = element("div");
-    identity.append(element("strong", intern.id), element("small", month(intern.month)));
-    const satisfaction = element("div");
-    satisfaction.append(element("small", "Удовлетворённость", "row-label"), coloredScore(intern.satisfaction, 5));
-    const readiness = element("div");
-    readiness.append(element("small", "Рекомендация к найму", "row-label"), coloredScore(intern.readiness, 10));
-    if (intern.mentor_month !== null) readiness.append(element("small", "Наставник · " + month(intern.mentor_month).toLowerCase()));
-    const progress = element("div", undefined, "row-progress");
-    const dynamics = changeLabel(intern.progress);
-    progress.append(element("small", "Прогресс по оценке наставников", "row-label"), element("span", dynamics));
-    const arrow = element("span", "›");
-    arrow.setAttribute("aria-hidden", "true");
-    row.append(identity, satisfaction, readiness, progress, arrow);
+  select.addEventListener("change", update);
+  update();
+}
+
+function renderMonitor(page, profile) {
+  const monitor = page.querySelector(".profile-monitor");
+  monitor.hidden = false;
+  const table = valuesTable("Сдача анкет по месяцам", ["Месяц", "Анкета стажера", "Анкета наставника"],
+    profile.coverage.map(item => [item.month, submission(item.intern_submitted), submission(item.mentor_submitted)]));
+  page.querySelector(".profile-coverage").append(table);
+  const list = page.querySelector(".profile-signals");
+  for (const signal of profile.signals) {
+    const row = element("li");
+    const badge = element("span", signal.level === "critical" ? "Критичный сигнал" : "Зона внимания", "signal-badge");
+    badge.dataset.level = signal.level;
+    const source = element("a", signal.source === "feedback" ? "Комментарии" : "Оценки", "chart-table-link");
+    source.href = "#" + signal.source;
+    row.append(badge, element("strong", signal.label), element("p", signal.detail + " Месяцы: " + signal.months.join(", ") + "."), source);
     list.append(row);
   }
+  if (!profile.signals.length) list.append(element("li", "Сигналов по правилам мониторинга нет."));
 }
 
 function commentCard(comment) {
   const article = element("article");
-  const attribution = month(comment.month) + (comment.mentor ? " · " + comment.mentor : "");
-  article.append(element("p", attribution, "comment-meta"), element("p", comment.text));
+  const attribution = month(comment.month) + " · " + comment.author;
+  article.append(element("p", attribution, "comment-meta"), element("strong", comment.question), element("p", comment.text));
   return article;
 }
 
@@ -321,25 +362,41 @@ function trendFigure(chart) {
   };
 }
 
-function renderMainChart(page, data, profile, signal) {
-  const chart = profile ? data.charts[0] : data.charts.find(({ id }) => id === "readiness");
-  page.querySelector("#chart-heading").textContent = profile ? "Удовлетворённость по месяцам" : "Рекомендация к найму по месяцам";
-  const caption = page.querySelector(".chart-panel .chart-caption");
-  caption.textContent = describeSeries(chart);
+function renderMainChart(page, data, signal) {
+  const own = data.charts.find(({ id }) => id === "clarity");
+  const mentor = data.charts.find(({ id }) => id === "expectations");
+  const chart = {
+    ...own, series: [
+      { ...own.series[0], label: "Стажеры · понятность задач" },
+      { ...mentor.series[0], label: "Наставники · понимание задач" },
+    ],
+  };
+  page.querySelector("#chart-summary").textContent = describeSeries(chart);
   const { traces, layout } = trendFigure(chart);
-  drawChart(page.querySelector(".chart"), traces, layout, signal);
+  drawChart(page.querySelector(".chart-panel .chart"), traces, layout, signal);
 }
 
 function renderMonthly(page, charts) {
   const months = charts[0].series[0].points.map((point) => String(point.month));
   const rows = charts.flatMap((chart) => chart.series.map((series) => {
-    const source = chart.series.length > 1 ? " · " + series.label : "";
+    const source = " · " + series.label;
     const unit = chart.scale ? chart.scale.join("–") : chart.unit;
     return [chart.label + source + (unit ? " (" + unit + ")" : ""),
-      ...series.points.map(({ value }) => value === null ? "—" : format.format(value))];
+      ...series.points.map(({ value, responses }) => {
+        const result = document.createDocumentFragment();
+        const count = element("small", undefined, "monthly-count");
+        count.append(element("span", "Ответов: ", "visually-hidden"), String(responses));
+        result.append(value === null ? "—" : format.format(value), count);
+        return result;
+      })];
   }));
   const table = valuesTable("Все показатели по месяцам", ["Показатель / месяц", ...months], rows);
   table.classList.add("monthly-table");
+  charts.flatMap((chart) => chart.series.map((_, index) => chart.id + "-" + index)).forEach((key, index) => {
+    const row = table.tBodies[0].rows[index];
+    row.id = "monthly-" + key;
+    row.tabIndex = -1;
+  });
   page.querySelector(".monthly .table-scroll").append(table);
 }
 
@@ -358,7 +415,7 @@ function valuesTable(label, headers, rows) {
     const cell = element("th", label);
     cell.scope = "row";
     row.append(cell);
-    for (const value of values) row.insertCell().textContent = value;
+    for (const value of values) row.insertCell().append(value instanceof Node ? value : String(value));
   }
   return table;
 }
@@ -368,95 +425,40 @@ function renderAdditionalCharts(page, data, isProfile, signal) {
   const grid = page.querySelector(".chart-grid");
   const axes = { fixedrange: true, gridcolor: "#eaedf1", zeroline: false };
 
-  function panel(title, caption, traces, layout, table) {
+  function panel(title, caption, traces, layout) {
     const card = element("section", undefined, "panel secondary-chart");
     const graph = element("div", undefined, "chart");
     graph.setAttribute("aria-hidden", "true");
     card.append(element("h3", title), element("p", caption, "chart-caption"), graph);
-    if (table) {
-      const wrap = element("div", undefined, "table-scroll chart-values");
-      wrap.append(table);
-      card.append(wrap);
-    }
-    if (!table) {
-      const tableLink = element("a", "Помесячные значения", "chart-table-link");
-      tableLink.href = "#monthly";
-      card.append(tableLink);
-    }
+    const tableLink = element("a", "Помесячные значения", "chart-table-link");
+    tableLink.href = "#monthly";
+    card.append(tableLink);
     grid.append(card);
     drawChart(graph, traces, layout, signal);
   }
 
+  const selected = isProfile ? ["development", "quality", "autonomy", "deadlines"] : ["satisfaction", "development", "quality", "autonomy"];
+  for (const key of selected) {
+    const chart = data.charts.find(({ id }) => id === key);
+    const { traces, layout } = trendFigure(chart);
+    panel(chart.label, describeSeries(chart), traces, layout);
+  }
   if (!isProfile) {
-    for (const id of ["satisfaction", "progress"]) {
-      const trend = data.charts.find((item) => item.id === id);
-      const { traces, layout } = trendFigure(trend);
-      panel(trend.label + " по месяцам", describeSeries(trend), traces, layout);
-    }
-    const chart = data.charts.find(({ id }) => id === "hours");
-    const points = chart.series[0].points;
-    panel("Время наставничества", describeSeries(chart), points.some(({ value }) => value !== null) ? [{
-      type: "bar", x: points.map(({ month }) => month), y: points.map(({ value }) => value),
-      marker: { color: palette.blue, cornerradius: 5 }, hovertemplate: "Месяц %{x} · %{y} ч<extra></extra>",
-    }] : [], {
-      xaxis: { ...axes, dtick: 1, showgrid: false, title: { text: "Месяц" } },
-      yaxis: { ...axes, rangemode: "tozero", ticksuffix: " ч" },
-    });
-
-    const groups = data.readiness_distribution;
-    const count = groups.reduce((sum, group) => sum + group.count, 0);
-    panel("Распределение рекомендаций к найму", "Оценки наставников за весь период · " + responseLabel(count) + ". Числа по диапазонам приведены ниже.", count ? [{
-      type: "pie", hole: .68, sort: false, labels: groups.map((group) => group.label),
-      values: groups.map((group) => group.count), textinfo: "none",
-      marker: { colors: [palette.rose, palette.amber, palette.green], line: { width: 2, color: "#fff" } },
-      hovertemplate: "%{label} баллов · %{value} (%{percent})<extra></extra>",
-    }] : [], {
-      margin: { t: 9, b: 44, l: 0, r: 0 }, showlegend: true,
-      legend: { orientation: "h", x: .5, xanchor: "center", y: -.05, font: { size: 11 } },
-      annotations: [{ text: String(count), x: .5, y: .5, showarrow: false, font: { size: 25, color: "#1d1d1f" } }],
-    }, valuesTable("Распределение рекомендаций к найму", ["Баллы", "Число оценок"],
-      groups.map((group) => [group.label, group.count])));
-    return;
+    const rail = page.querySelector(".rail-chart");
+    rail.hidden = false;
+    rail.querySelector(".chart-caption").textContent = "Число стажеров с ответом в каждом из двух опросов.";
+    const traces = [
+      { type:"bar", name:"Стажеры", marker:{ color: palette.blue },
+        x:[1,2,3,4,5,6], y:[1,2,3,4,5,6].map(month => data.interns.filter(item => item.coverage[month - 1].intern_submitted).length) },
+      { type:"bar", name:"Наставники", marker:{ color: palette.violet },
+        x:[1,2,3,4,5,6], y:[1,2,3,4,5,6].map(month => data.interns.filter(item => item.coverage[month - 1].mentor_submitted).length) },
+    ];
+    drawChart(rail.querySelector(".chart"), traces, {
+      height: 185, margin: { t: 30, r: 10, b: 28, l: 30 }, barmode: "group",
+      showlegend: true, legend: { orientation: "h", x: 0, y: 1.16 },
+      xaxis: { ...axes, dtick: 1, showgrid: false }, yaxis: { ...axes, dtick: 1, range: [0, data.intern_count + 1] },
+    }, signal);
   }
-
-  const abbreviations = ["Удовлетв.", "Ясность задач", "Поддержка", "Прогресс", "Мотивация"];
-  const months = data.response_months;
-  const labels = months.map((value) => month(value));
-  const comparison = [];
-  for (const [index, key] of (months[0] === months[1] ? [[1, "last"]] : [[0, "first"], [1, "last"]])) {
-    const values = data.response_profile.map((axis) => axis[key]);
-    if (values.filter((value) => value !== null).length < 3) continue;
-    comparison.push({
-      type: "scatterpolar", mode: "lines+markers", name: labels[index],
-      r: [...values, values[0]], theta: [...abbreviations, abbreviations[0]],
-      line: { color: index === 0 ? palette.violet : palette.blue, width: 2 },
-      marker: { size: 6 }, fill: values.includes(null) ? "none" : "toself",
-      fillcolor: index === 0 ? "rgba(128,80,220,.12)" : "rgba(0,117,237,.15)",
-      hovertemplate: "%{theta} · %{r} / 5<extra>%{fullData.name}</extra>",
-    });
-  }
-  const sameMonth = months[0] === months[1];
-  panel("Самооценка стажёра", sameMonth ? "Самооценка за единственный доступный месяц · шкала 1–5" :
-    "Самооценка в первом и последнем доступных месяцах · шкала 1–5", comparison, {
-    margin: { t: 28, r: 52, b: 54, l: 52 }, showlegend: true,
-    legend: { orientation: "h", x: .5, xanchor: "center", y: -.14 },
-    polar: { radialaxis: { range: [0, 5], dtick: 1, showticklabels: false, gridcolor: "#eaedf1" },
-      angularaxis: { tickfont: { size: 10 }, gridcolor: "#eaedf1" } },
-  }, valuesTable("Самооценка стажёра", ["Показатель", ...(sameMonth ? [labels[1]] : labels)],
-    data.response_profile.map((axis) => [axis.label, ...(sameMonth ? [score(axis.last, 5)] :
-      [score(axis.first, 5), score(axis.last, 5)])])));
-
-  const chart = data.charts.find(({ id }) => id === "readiness");
-  const points = chart.series[0].points;
-  panel("Рекомендация к найму по месяцам", describeSeries(chart), points.some(({ value }) => value !== null) ? [{
-    type: "scatter", mode: "markers", x: points.map(({ month }) => month), y: points.map(({ value }) => value),
-    marker: { size: 12, color: points.map(({ value }) => palette[rating(value, 10)?.tone || "neutral"]),
-      line: { width: 1, color: "#575366" } },
-    hovertemplate: "Месяц %{x} · %{y} / 10<extra></extra>",
-  }] : [], {
-    xaxis: { ...axes, dtick: 1, showgrid: false, title: { text: "Месяц" } },
-    yaxis: { ...axes, range: [-.4, 10.5], dtick: 2 },
-  });
 }
 
 function revealAnalysis(output, text, signal, animate) {
@@ -510,13 +512,9 @@ function revealAnalysis(output, text, signal, animate) {
   requestAnimationFrame(step);
 }
 
-function renderEvidence(page, data, profile) {
+function renderEvidence(page, data) {
   const list = page.querySelector(".analysis-evidence ul");
-  const metrics = [...data.metrics];
-  if (profile && data.mentor_progress) {
-    metrics.push({ label: "Прогресс в обучении", source: "Оценка наставников", scale: 5, change: data.mentor_progress });
-  }
-  for (const metric of metrics) {
+  for (const metric of data.metrics) {
     if (!metric.change) continue;
     const { first, latest } = metric.change;
     const line = element("li");
@@ -599,6 +597,45 @@ function renderAnalysis(page, id, data, signal) {
   refresh("POST", true);
 }
 
+function watchUpdates(page, data, signal) {
+  const status = page.querySelector(".source-status");
+  const refresh = page.querySelector(".data-refresh");
+  function describe(sync) {
+    status.textContent = {
+      history: "Источник: исторические анкеты Excel",
+      connected: "История Excel и ответы Google Forms",
+      error: "Google Forms временно недоступен. Показаны последние доступные данные.",
+    }[sync.state];
+    if (sync.detail) status.textContent += " " + sync.detail;
+  }
+  describe(data.sync);
+  let checking = false;
+  async function check(manual = false) {
+    if (checking || signal.aborted || (!manual && document.hidden)) return;
+    checking = true;
+    refresh.disabled = true;
+    try {
+      const update = await request("/api/data-status", signal);
+      if (signal.aborted) return;
+      if (update.data_version !== data.data_version) {
+        if (!manual && page.querySelector("dialog").open) status.textContent = "Поступили новые ответы. Обновите страницу после завершения диалога.";
+        else renderRoute(manual);
+      } else {
+        describe(update.sync);
+        if (manual && update.sync.state !== "error") status.textContent += " · актуально";
+      }
+    } catch {
+      if (!signal.aborted) status.textContent = "Не удалось проверить обновления. Можно повторить.";
+    } finally {
+      checking = false;
+      refresh.disabled = false;
+    }
+  }
+  refresh.addEventListener("click", () => check(true));
+  const timer = setInterval(check, 30_000);
+  signal.addEventListener("abort", () => clearInterval(timer), { once: true });
+}
+
 async function renderRoute(focus = false) {
   routeController?.abort();
   activePath = location.pathname;
@@ -625,7 +662,7 @@ async function renderRoute(focus = false) {
     const title = id ? "Стажёр " + id : "Обзор программы";
     document.title = title + " · МГТС";
     page.querySelector("h1").textContent = title;
-    page.querySelector(".page-meta").textContent = profile ? "Последний ответ стажёра · " + month(profile.month).toLowerCase()
+    page.querySelector(".page-meta").textContent = profile ? profile.department + " · шесть контрольных точек"
       : "Месяцы " + overview.first_month + "–" + overview.last_month + " · Стажёры: " + overview.intern_count +
         " (" + responseLabel(overview.intern_responses) + ") · Наставники: " +
         overview.mentor_count + " (" + responseLabel(overview.mentor_responses) + ")";
@@ -633,13 +670,18 @@ async function renderRoute(focus = false) {
     page.classList.toggle("profile", Boolean(profile));
     renderMetrics(page, data.metrics, Boolean(profile));
     renderMonthly(page, data.charts);
-    if (profile) renderComments(page, profile);
+    if (profile) {
+      renderMonitor(page, profile);
+      renderComments(page, profile);
+    }
     else renderDirectory(page, overview.interns);
     main.replaceChildren(page);
-    renderMainChart(page, data, profile, signal);
+    renderMainChart(page, data, signal);
     renderAdditionalCharts(page, data, Boolean(profile), signal);
-    renderEvidence(page, data, profile);
+    renderEvidence(page, data);
     renderAnalysis(page, id, data, signal);
+    renderAssistant(page, id, data.data_version, signal);
+    watchUpdates(page, data, signal);
     if (location.hash) focusSection(location.hash);
     else if (focus) main.focus({ preventScroll: true });
   } catch (error) {

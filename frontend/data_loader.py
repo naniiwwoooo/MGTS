@@ -1,33 +1,3 @@
-"""Совместимый интерфейс загрузчика для версии Streamlit."""
+"""Исторический импорт модуля данных для локального Streamlit-интерфейса."""
 
-from backend.surveys import (
-    ROOT as ROOT,
-    DATA_DIR as DATA_DIR,
-    INTERN_FILE as INTERN_FILE,
-    MENTOR_FILE as MENTOR_FILE,
-    INTERN_ID as INTERN_ID,
-    MENTOR_ID as MENTOR_ID,
-    MONTH as MONTH,
-    NPS as NPS,
-    HIRE_READINESS as HIRE_READINESS,
-    HOURS as HOURS,
-    COMMENT as COMMENT,
-    INTERN_METRICS as INTERN_METRICS,
-    MENTOR_METRICS as MENTOR_METRICS,
-    INTERN_COLUMNS as INTERN_COLUMNS,
-    MENTOR_COLUMNS as MENTOR_COLUMNS,
-    load_intern_data as load_intern_data,
-    load_mentor_data as load_mentor_data,
-    load_all as load_all,
-    intern_ids as intern_ids,
-    mentor_ids as mentor_ids,
-    overall_metrics as overall_metrics,
-    monthly_mean as monthly_mean,
-    intern_summary as intern_summary,
-    intern_timeline as intern_timeline,
-    mentor_timeline as mentor_timeline,
-    mentor_comments as mentor_comments,
-    radar_profile as radar_profile,
-    team_radar as team_radar,
-    latest_snapshot as latest_snapshot,
-)
+from backend.surveys import *  # noqa: F403

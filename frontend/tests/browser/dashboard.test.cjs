@@ -51,6 +51,7 @@ after(async () => {
 async function withPage(context, options, scenario) {
   const page = await browser.newPage({ reducedMotion: "reduce", ...options });
   context.after(() => page.close());
+  page.setDefaultTimeout(8000);
   const exceptions = [];
   page.on("pageerror", (error) => exceptions.push(error.message));
   await scenario(page);
@@ -92,11 +93,13 @@ test("Клавиатура, профиль и переход к исходным
     assert.equal(overviewRequests, 1);
 
     await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement.id), "coverage-month");
+    await page.keyboard.press("Tab");
     await page.keyboard.press("Enter");
-    await page.getByRole("heading", { name: "Стажёр INT-01", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "Стажёр СТ-001", exact: true }).waitFor();
     await activeElementId(page, "main");
     await page.getByRole("heading", { name: "Последний отзыв наставника" }).waitFor();
-    assert.equal(await page.locator(".intern-comments article").count(), 6);
+    assert.equal(await page.locator(".intern-comments article").count(), 12);
     await page.getByText("Тестовое заключение по стажёру.", { exact: true }).waitFor();
 
     const tableLink = page.getByRole("link", { name: "Значения графика в таблице" });
@@ -128,8 +131,10 @@ for (const width of [320, 390, 768, 1440]) {
       assert.equal(await page.locator(".secondary-chart .main-svg").count(), 0);
       assert.equal(await page.locator(".directory-row").count(), 5);
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-      await page.getByRole("table", { name: "Все показатели по месяцам" }).waitFor();
-      assert.match(await page.locator("#chart-summary").innerText(), /месяц 1 — 4,6 \/ 10.*месяц 6 — 9,2 \/ 10/);
+      const table = page.getByRole("table", { name: "Все показатели по месяцам" });
+      await table.waitFor();
+      assert.equal(await table.locator("tbody tr").first().locator("td").last().locator(".monthly-count").textContent(), "Ответов: 5");
+      assert.match(await page.locator("#chart-summary").innerText(), /месяц 1 — 3,6 \/ 5.*месяц 6 — 5 \/ 5/);
       const firstPlot = page.locator(".secondary-chart .chart").first();
       await firstPlot.scrollIntoViewIfNeeded();
       await firstPlot.locator(".main-svg").first().waitFor();
@@ -142,10 +147,10 @@ for (const width of [320, 390, 768, 1440]) {
 test("Таблица остаётся доступной при сбое загрузки библиотеки графиков", async (context) => {
   await withPage(context, { viewport: { width: 1280, height: 900 } }, async (page) => {
     await page.route("**/assets-vendor/plotly.js", (route) => route.abort());
-    await page.goto(origin + "/interns/INT-02#monthly");
+    await page.goto(origin + "/interns/" + encodeURIComponent("СТ-002") + "#monthly");
     await activeElementId(page, "monthly");
     await page.getByRole("table", { name: "Все показатели по месяцам" }).waitFor();
-    await page.locator(".chart-panel").scrollIntoViewIfNeeded();
+    await page.locator(".chart-panel .chart").scrollIntoViewIfNeeded();
     await page.locator(".chart-panel").getByText(/Диаграмма недоступна/).waitFor();
     await page.getByText("Тестовое заключение по стажёру.", { exact: true }).waitFor();
   });
@@ -166,19 +171,126 @@ test("Все типы диаграмм сохраняют анимацию по�
       };
     });
     async function checkCharts(types) {
-      const charts = page.locator(".chart");
+      const charts = page.locator(".chart:visible");
       for (const [index, type] of types.entries()) {
-        await charts.nth(index).scrollIntoViewIfNeeded();
-        await page.waitForFunction(([position, kind]) =>
-          window.animatedCharts.get(document.querySelectorAll(".chart")[position]) === kind, [index, type]);
+        const chart = charts.nth(index);
+        await chart.evaluate((element) => element.scrollIntoView({ block: "center" }));
+        const handle = await chart.elementHandle();
+        try {
+          await page.waitForFunction(([element, kind]) => window.animatedCharts.get(element) === kind,
+            [handle, type]);
+        } catch (error) {
+          const state = await chart.evaluate((element) => ({
+            expected: element.parentElement.querySelector("h2, h3").textContent,
+            actual: element.data?.[0]?.type, animated: window.animatedCharts.get(element),
+          }));
+          throw new Error("Состояние графика: " + JSON.stringify(state), { cause: error });
+        }
+        await handle.dispose();
       }
     }
 
     await page.goto(origin);
     await page.getByRole("heading", { name: "Обзор программы" }).waitFor();
-    await checkCharts(["scatter", "scatter", "scatter", "bar", "pie"]);
-    await page.goto(origin + "/interns/INT-02");
-    await page.getByRole("heading", { name: "Стажёр INT-02", exact: true }).waitFor();
-    await checkCharts(["scatter", "scatterpolar", "points"]);
+    await checkCharts(["bar", "scatter", "scatter", "scatter", "scatter", "scatter"]);
+    await page.goto(origin + "/interns/" + encodeURIComponent("СТ-002"));
+    await page.getByRole("heading", { name: "Стажёр СТ-002", exact: true }).waitFor();
+    await checkCharts(["scatter", "scatter", "scatter", "scatter", "scatter"]);
+  });
+});
+
+
+for (const width of [390, 1440]) {
+  test("Ассистент отвечает из открытого контекста, " + width + " px", async (context) => {
+    await withPage(context, { viewport: { width, height: 820 } }, async (page) => {
+      await page.goto(origin);
+      await page.getByRole("button", { name: "Открыть чат" }).click();
+      const dialog = page.getByRole("dialog", { name: "Помощник по данным" });
+      await dialog.getByText("Данные: обзор программы").waitFor();
+      const inputBounds = await dialog.getByRole("textbox", { name: "Ваш вопрос" }).boundingBox();
+      assert(inputBounds.y >= 0 && inputBounds.y + inputBounds.height <= 820);
+      await checkAccessibility(page);
+      await dialog.getByRole("button", { name: "Как изменилось профессиональное развитие?" }).click();
+      await dialog.getByText(/4,2 из 5.*5 из 5/).waitFor();
+      await dialog.getByRole("link", { name: "Профессиональное развитие · Стажеры" }).click();
+      await activeElementId(page, "monthly-development-0");
+
+      await page.getByRole("link", { name: /^СТ-002/ }).last().click();
+      await page.getByRole("button", { name: "Открыть чат" }).click();
+      await dialog.getByText("Данные: стажёр СТ-002").waitFor();
+      assert.equal(await dialog.getByText(/4,2 из 5/).count(), 0);
+      await dialog.getByRole("button", { name: "Покажи последний отзыв наставника" }).click();
+      await dialog.getByRole("link", { name: "Комментарий в профиле" }).click();
+      await activeElementId(page, "fresh-feedback");
+      await page.getByRole("button", { name: "Открыть чат" }).click();
+      const input = dialog.getByRole("textbox", { name: "Ваш вопрос" });
+      await input.fill("Какая погода?");
+      await input.press("Enter");
+      await dialog.getByText(/Отвечаю только по данным/).waitFor();
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "hidden" });
+      assert.equal(await page.evaluate(() => document.activeElement.textContent), "Открыть чат");
+    });
+  });
+}
+
+test("Запоздалый ответ обзора не появляется в чате стажёра", async (context) => {
+  await withPage(context, { viewport: { width: 1440, height: 900 } }, async (page) => {
+    const release = Promise.withResolvers();
+    const started = Promise.withResolvers();
+    await page.route("**/api/assistant/overview", async (route) => {
+      started.resolve();
+      await release.promise;
+      await route.fulfill({ json: { status: "answered", text: "Запоздалый ответ обзора" } }).catch(() => {});
+    });
+    await page.goto(origin);
+    await page.getByRole("button", { name: "Открыть чат" }).click();
+    try {
+      await page.getByRole("button", { name: "Как изменилось профессиональное развитие?" }).click();
+      await started.promise;
+      await page.getByRole("navigation", { name: "Разделы" }).getByRole("link", { name: "СТ-002" }).click();
+      await page.getByRole("heading", { name: "Стажёр СТ-002", exact: true }).waitFor();
+    } finally {
+      release.resolve();
+    }
+    await page.getByRole("button", { name: "Открыть чат" }).click();
+    await page.getByText("Данные: стажёр СТ-002").last().waitFor();
+    assert.equal(await page.getByRole("dialog").getByText("Запоздалый ответ обзора").count(), 0);
+  });
+});
+
+test("История показывает все контрольные месяцы и пять анкет каждого типа", async (context) => {
+  await withPage(context, { viewport: { width: 1440, height: 900 } }, async (page) => {
+    await page.goto(origin);
+    await page.getByRole("heading", { name: "Обзор программы" }).waitFor();
+    const period = page.getByLabel("Статус анкет за месяц");
+    for (const month of ["1", "4", "6"]) {
+      await period.selectOption(month);
+      assert.equal(await page.locator('.directory-row .submission[data-submitted="true"]').count(), 10);
+    }
+    await page.getByRole("button", { name: "Обновить данные" }).click();
+    await page.getByText(/исторические анкеты Excel · актуально/).waitFor();
+  });
+});
+
+test("Дашборд перечитывает данные после смены версии без перезапуска страницы", async (context) => {
+  await withPage(context, { viewport: { width: 1440, height: 900 } }, async (page) => {
+    await page.goto(origin);
+    await page.getByRole("heading", { name: "Обзор программы" }).waitFor();
+    const original = await page.request.get(origin + "/api/overview").then(response => response.json());
+    const next = { ...original, data_version: "updated-test" };
+    next.metrics[0].change.latest.value = 3.2;
+    next.metrics[0].value = 3.2;
+    next.sync = { state: "connected" };
+    await page.route("**/api/data-status", route => route.fulfill({
+      json: { data_version: next.data_version, sync: next.sync },
+    }));
+    await page.route("**/api/overview", route => route.fulfill({ json: next }));
+    await page.route("**/api/analysis/overview?*", route => route.fulfill({ json: { status: "unavailable" } }));
+    await page.evaluate(() => { window.dashboardPageSentinel = true; });
+    await page.getByRole("button", { name: "Обновить данные" }).click();
+    await page.getByText("История Excel и ответы Google Forms").waitFor();
+    await page.locator(".metric-value").first().getByText("3,2", { exact: false }).waitFor();
+    assert.equal(await page.evaluate(() => window.dashboardPageSentinel), true);
   });
 });
