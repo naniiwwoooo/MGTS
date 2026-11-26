@@ -20,7 +20,7 @@ from backend.main import create_app, get_snapshot
 @pytest.fixture(autouse=True)
 def keep_google_disconnected(monkeypatch):
     monkeypatch.setenv("MGTS_GOOGLE_INTERN_SHEET_ID", "")
-    monkeypatch.delenv("MGTS_GOOGLE_MENTOR_SHEET_ID", raising=False)
+    monkeypatch.setenv("MGTS_GOOGLE_MENTOR_SHEET_ID", "")
 
 
 @pytest.fixture
@@ -395,17 +395,16 @@ def test_assistant_keeps_comments_local_and_validates_model_choices(run, monkeyp
     execute(scenario)
 
 
-def test_forms_merge_latest_submission_and_keep_last_good_snapshot(monkeypatch):
+def test_forms_link_mentor_responses_and_refresh_sources_independently(monkeypatch):
     from backend import google_forms
 
     history = get_snapshot()
     sync = google_forms.FormsSync()
     today = 1000
     monkeypatch.setattr(google_forms, "monotonic", lambda: today)
-    monkeypatch.setenv("MGTS_GOOGLE_INTERN_SHEET_ID", "intern-test")
-    monkeypatch.setenv("MGTS_GOOGLE_MENTOR_SHEET_ID", "mentor-test")
-    monkeypatch.setenv("MGTS_GOOGLE_INTERN_TAB", "Тест")
-    monkeypatch.setenv("MGTS_GOOGLE_MENTOR_TAB", "Тест")
+    for role in ("INTERN", "MENTOR"):
+        for setting in ("SHEET_ID", "GID", "TAB", "PRIVATE"):
+            monkeypatch.delenv(f"MGTS_GOOGLE_{role}_{setting}", raising=False)
 
     intern = history.interns.iloc[-1].to_dict()
     mentor = history.mentors.iloc[-1].to_dict()
@@ -414,24 +413,43 @@ def test_forms_merge_latest_submission_and_keep_last_good_snapshot(monkeypatch):
     score = 5 if intern[surveys.SATISFACTION] != 5 else 2
     quality = 5 if mentor[surveys.QUALITY] != 5 else 2
     calls = []
-    broken = False
+    offline = None
+    new_id = "СТ-006"
+    mentor_id = str(mentor[surveys.MENTOR_ID])
+    first_mentor_response = {
+        **mentor, surveys.INTERN_ID: "CT-006", surveys.MONTH: "1-й месяц", surveys.QUALITY: 4,
+        surveys.DEPARTMENT: intern[surveys.DEPARTMENT].upper(),
+        surveys.MENTOR_ID: mentor_id.replace("Н-", "H-", 1),
+    }
+    intern_rows = [intern, {**intern, surveys.SATISFACTION: score}]
+    mentor_rows = [
+        {**mentor, surveys.QUALITY: quality},
+        first_mentor_response,
+        {**first_mentor_response, surveys.MONTH: "Месяц 7"},
+    ]
 
     def fetch(sheet):
         calls.append(sheet.spreadsheet)
-        assert sheet.tab == "Тест"
-        if sheet.spreadsheet == "intern-test":
-            rows = [intern, {**intern, surveys.SATISFACTION: score}]
+        assert sheet.use_csv
+        if sheet.spreadsheet == offline:
+            raise requests.Timeout()
+        if sheet.spreadsheet == google_forms.INTERN_SPREADSHEET:
+            assert sheet.gid == "720609798"
+            rows = intern_rows
             columns = surveys.INTERN_COLUMNS
-        elif broken:
-            raise TimeoutError
         else:
-            rows = [{**mentor, surveys.QUALITY: quality}]
+            assert sheet.spreadsheet == google_forms.MENTOR_SPREADSHEET
+            assert sheet.gid == "1575164264"
+            rows = mentor_rows
             columns = surveys.MENTOR_COLUMNS
-        return [["Отметка времени", *columns], *[["test", *(row[column] for column in columns)] for row in rows]]
+        headers = ["\n" + column for column in columns]
+        return [["Отметка времени", *headers], *[["test", *(row[column] for column in columns)] for row in rows]]
 
     monkeypatch.setattr(google_forms, "fetch_rows", fetch)
     current = sync.update(history)
     assert current.sync.state == "connected"
+    assert "ожидают появления профиля" in current.sync.detail
+    assert "Строки в Google Sheets: 4" in current.sync.detail
     assert current.data_version != history.data_version
     assert len(current.interns) == len(current.mentors) == 30
     assert current.interns.iloc[-1][surveys.SATISFACTION] == score
@@ -439,11 +457,32 @@ def test_forms_merge_latest_submission_and_keep_last_good_snapshot(monkeypatch):
     assert sync.update(history).data_version == current.data_version
     assert len(calls) == 2
 
-    broken = True
-    today += 61
+    offline = google_forms.MENTOR_SPREADSHEET
+    intern_rows.append({**intern, surveys.INTERN_ID: new_id, surveys.MONTH: "Месяц 1"})
+    today += google_forms.INTERVAL_SECONDS
     cached = sync.update(history)
-    assert cached.sync.state == "error"
-    assert cached.data_version == current.data_version
+    assert cached.sync.state == "partial"
+    assert cached.data_version != current.data_version
+    profile = dashboard.profile(cached, new_id)
+    assert profile.coverage[0].intern_submitted and profile.coverage[0].mentor_submitted
+    assert profile.coverage[0].submitted_mentors == [mentor_id]
+    assert profile.metrics[2].value == 4
+
+    offline = google_forms.INTERN_SPREADSHEET
+    mentor_rows.extend([
+        {**first_mentor_response, surveys.MENTOR_ID: mentor_id, surveys.QUALITY: 2},
+        {**first_mentor_response, surveys.DEPARTMENT: "Другое подразделение"},
+        {**first_mentor_response, surveys.MENTOR_ID: "Н-999", surveys.QUALITY: 4},
+    ])
+    today += google_forms.INTERVAL_SECONDS
+    updated = sync.update(history)
+    assert updated.sync.state == "partial"
+    assert updated.data_version != cached.data_version
+    assert len(updated.mentors) == len(history.mentors) + 2
+    profile = dashboard.profile(updated, new_id)
+    assert profile.metrics[2].value == 3
+    assert profile.coverage[0].submitted_mentors == [mentor_id, "Н-999"]
+    assert "Строки в Google Sheets: 4, 6" in updated.sync.detail
 
 
 def test_intern_form_csv_updates_overview_and_profile_without_mentor_sheet(run, monkeypatch):

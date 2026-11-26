@@ -72,7 +72,7 @@ class Comment(BaseModel):
 
 
 class SyncStatus(BaseModel):
-    state: Literal["history", "connected", "error"] = "history"
+    state: Literal["history", "connected", "partial", "error"] = "history"
     checked_at: datetime | None = None
     detail: str | None = None
     sources: list[Literal["interns", "mentors"]] = Field(default_factory=list)

@@ -287,7 +287,7 @@ test("Дашборд автоматически показывает новые 
     };
     next.metrics[0].change.latest.value = 3.2;
     next.metrics[0].value = 3.2;
-    next.sync = { state: "connected", sources: ["interns"] };
+    next.sync = { state: "connected", sources: ["interns", "mentors"] };
     await page.route("**/api/data-status", route => route.fulfill({
       json: { data_version: next.data_version, sync: next.sync },
     }));
@@ -295,7 +295,7 @@ test("Дашборд автоматически показывает новые 
     await page.route("**/api/analysis/overview?*", route => route.fulfill({ json: { status: "unavailable" } }));
     await page.evaluate(() => { window.dashboardPageSentinel = true; });
     await page.clock.fastForward(15_000);
-    await page.getByText("Ответы стажёров из Google Forms и Excel · Оценки наставников из Excel").waitFor();
+    await page.getByText("Опросы стажёров и наставников из Google Forms и Excel").waitFor();
     await page.locator(".metric-value").first().getByText("3,2", { exact: false }).waitFor();
     await page.getByText(/Стажёры: 6 \(31 ответ\)/).waitFor();
     const sidebar = page.getByRole("navigation", { name: "Разделы" });

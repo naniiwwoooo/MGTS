@@ -632,9 +632,12 @@ function watchUpdates(page, data, signal) {
   function describe(sync) {
     status.textContent = {
       history: "Источник: исторические анкеты Excel",
-      connected: sync.sources?.length === 1 && sync.sources[0] === "interns"
-        ? "Ответы стажёров из Google Forms и Excel · Оценки наставников из Excel"
-        : "История Excel и ответы Google Forms",
+      connected: sync.sources?.length === 1
+        ? (sync.sources[0] === "interns"
+          ? "Ответы стажёров из Google Forms и Excel · Оценки наставников из Excel"
+          : "Ответы стажёров из Excel · Оценки наставников из Google Forms и Excel")
+        : "Опросы стажёров и наставников из Google Forms и Excel",
+      partial: "Часть опросов Google Forms временно недоступна. Для неё показаны последние доступные данные.",
       error: "Google Forms временно недоступен. Показаны последние доступные данные.",
     }[sync.state];
     if (sync.detail) status.textContent += " " + sync.detail;
