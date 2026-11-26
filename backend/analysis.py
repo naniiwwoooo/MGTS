@@ -102,6 +102,11 @@ class AnalysisService:
                     continue
                 first, latest = metric.change.first, metric.change.latest
                 label = f"{metric.label} · {metric.source}"
+                if metric.participants:
+                    facts.append(
+                        f"{label}: средняя по последней доступной оценке каждого стажера "
+                        f"{metric.value:.2f}/{metric.scale}, стажеров с оценкой: {metric.participants}."
+                    )
                 current = f"месяц {latest.month}: {latest.value:.2f}/{metric.scale}, ответов: {latest.responses}"
                 if first.month == latest.month:
                     facts.append(f"{label}: {current}; для сравнения недостаточно данных.")

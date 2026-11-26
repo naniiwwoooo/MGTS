@@ -22,6 +22,7 @@ class Snapshot:
     interns: pd.DataFrame
     mentors: pd.DataFrame
     sync: SyncStatus = field(default_factory=SyncStatus)
+    new_intern_ids: tuple[str, ...] = ()
 
     @property
     def data_version(self) -> str:
@@ -118,13 +119,21 @@ def overview(snapshot: Snapshot) -> Overview:
             id=intern_id, department=intern[dl.DEPARTMENT].iloc[0], satisfaction=metrics[0].value,
             coverage=states, signals=evaluate_signals(own_charts, intern, mentor),
         ))
+    recent = list(dict.fromkeys([*snapshot.new_intern_ids, *(item.id for item in reversed(directory))]))[:5]
+    metrics = make_metrics(charts, ("satisfaction", "development", "quality"))
+    for metric in metrics[:2]:
+        scores = snapshot.interns.dropna(subset=[metric.label]).sort_values(dl.MONTH)
+        latest_scores = scores.drop_duplicates(dl.INTERN_ID, keep="last")[metric.label]
+        metric.value = float(latest_scores.mean()) if not latest_scores.empty else None
+        metric.month = None
+        metric.participants = len(latest_scores)
     return Overview(
         data_version=snapshot.data_version, sync=snapshot.sync, first_month=1, last_month=6,
         intern_count=len(directory), mentor_count=len(dl.mentor_ids(snapshot.mentors)),
         response_count=len(snapshot.interns) + len(snapshot.mentors),
         intern_responses=len(snapshot.interns), mentor_responses=len(snapshot.mentors),
-        metrics=make_metrics(charts, ("satisfaction", "development", "quality")),
-        charts=charts, interns=directory,
+        metrics=metrics,
+        charts=charts, interns=directory, recent_intern_ids=recent,
     )
 
 

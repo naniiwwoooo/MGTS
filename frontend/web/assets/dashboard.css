@@ -43,11 +43,13 @@ h2 { font-size: 1.25rem; line-height: 1.2; letter-spacing: -.025em; }
   grid-template-columns: 184px minmax(0, 1fr);
   gap: clamp(18px, 3vw, 40px);
 }
-.sidebar { position: sticky; top: 88px; align-self: start; }
+.sidebar { position: sticky; top: 88px; align-self: start; max-height: calc(100dvh - 100px); overflow-y: auto; }
 .sidebar-label { color: var(--muted); font-size: .82rem; padding: 18px 12px 6px; }
 .nav-link { display: flex; align-items: center; min-height: 44px; padding: 8px 12px; border-radius: 11px; color: var(--ink); font-size: .93rem; }
 .nav-link:hover { background: #eaeaf0; }
 .nav-link[aria-current="page"] { background: #e5efff; color: var(--blue-dark); font-weight: 680; }
+.nav-history-toggle { width: 100%; margin-top: 4px; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 11px; background: transparent; color: var(--blue-dark); text-align: left; font-size: .88rem; }
+.nav-history-toggle:hover { background: #e5efff; }
 .mobile-navigation { display: none; }
 main { min-width: 0; scroll-margin-top: 76px; }
 .page { display: grid; gap: 18px; }

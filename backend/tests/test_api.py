@@ -1,12 +1,15 @@
 """API, совместимость расчётов и сценарии ИИ без внешних запросов."""
 
 import asyncio
+import csv
+from io import StringIO
 import ssl
 from threading import Event
 
 import httpx
 import pandas as pd
 import pytest
+import requests
 
 import llm
 from llm import core
@@ -16,7 +19,7 @@ from backend.main import create_app, get_snapshot
 
 @pytest.fixture(autouse=True)
 def keep_google_disconnected(monkeypatch):
-    monkeypatch.delenv("MGTS_GOOGLE_INTERN_SHEET_ID", raising=False)
+    monkeypatch.setenv("MGTS_GOOGLE_INTERN_SHEET_ID", "")
     monkeypatch.delenv("MGTS_GOOGLE_MENTOR_SHEET_ID", raising=False)
 
 
@@ -441,6 +444,113 @@ def test_forms_merge_latest_submission_and_keep_last_good_snapshot(monkeypatch):
     cached = sync.update(history)
     assert cached.sync.state == "error"
     assert cached.data_version == current.data_version
+
+
+def test_intern_form_csv_updates_overview_and_profile_without_mentor_sheet(run, monkeypatch):
+    from backend import google_forms
+
+    _, execute = run
+    history = get_snapshot()
+    answer = history.interns.iloc[-1].to_dict()
+    answer[surveys.MONTH] = "Месяц 6"
+    initial = int(answer[surveys.SATISFACTION])
+    changed = 2 if initial != 2 else 5
+    submissions = [answer, {**answer, surveys.MONTH: "Месяц 7"}]
+    now = 1000
+    offline = False
+    calls = []
+    monkeypatch.setattr(google_forms, "monotonic", lambda: now)
+    monkeypatch.delenv("MGTS_GOOGLE_INTERN_SHEET_ID")
+    for name in ("MGTS_GOOGLE_INTERN_GID", "MGTS_GOOGLE_INTERN_TAB", "MGTS_GOOGLE_INTERN_PRIVATE"):
+        monkeypatch.delenv(name, raising=False)
+
+    def get(url, *, params, timeout):
+        calls.append(url)
+        assert url == f"https://docs.google.com/spreadsheets/d/{google_forms.INTERN_SPREADSHEET}/export"
+        assert params == {"format": "csv", "gid": "720609798"}
+        if offline:
+            raise requests.Timeout()
+        buffer = StringIO(newline="")
+        writer = csv.writer(buffer)
+        headers = ["ID" if field == surveys.INTERN_ID else field for field in surveys.INTERN_COLUMNS]
+        headers[4] = "Поддержка и обратная связь\nнаставника"
+        writer.writerow(["Отметка времени", *headers])
+        for row in submissions:
+            writer.writerow(["07.01.2026", *(row[field] for field in surveys.INTERN_COLUMNS)])
+        response = requests.Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = "text/csv; charset=utf-8"
+        response._content = buffer.getvalue().encode("utf-8-sig")
+        return response
+
+    monkeypatch.setattr(google_forms.requests, "get", get)
+
+    async def scenario(client):
+        nonlocal now, offline
+        profile_url = f"/api/interns/{answer[surveys.INTERN_ID]}"
+        overview = (await client.get("/api/overview")).json()
+        profile = (await client.get(profile_url)).json()
+        assert overview["sync"]["state"] == "connected"
+        assert overview["sync"]["sources"] == ["interns"]
+        assert "Строки в Google Sheets: 3" in overview["sync"]["detail"]
+        assert len(calls) == 1
+
+        submissions.append({**answer, surveys.SATISFACTION: str(changed), surveys.INTERN_NOTES[0]: "Текст, с переносом\nстроки"})
+        submissions.append({**answer, surveys.DEPARTMENT: "Другое подразделение"})
+        now += google_forms.INTERVAL_SECONDS
+        status = (await client.get("/api/data-status")).json()
+        fresh_overview = (await client.get("/api/overview")).json()
+        fresh_profile = (await client.get(profile_url)).json()
+        assert status["data_version"] != overview["data_version"]
+        assert status["data_version"] == fresh_overview["data_version"] == fresh_profile["data_version"]
+        assert "Строки в Google Sheets: 3, 5" in status["sync"]["detail"]
+        assert fresh_overview["metrics"][0]["value"] != overview["metrics"][0]["value"]
+        assert fresh_overview["intern_responses"] == fresh_overview["mentor_responses"] == 30
+        assert fresh_profile["metrics"][0]["value"] == changed
+        assert fresh_profile["comments"] == profile["comments"]
+        assert any(comment["text"] == "Текст, с переносом\nстроки" for comment in fresh_profile["intern_comments"])
+        assert (await client.get(profile_url + "/analysis", params={"version": overview["data_version"]})).status_code == 409
+        pd.testing.assert_frame_equal(get_snapshot().mentors, history.mentors)
+        assert len(calls) == 2
+
+        offline = True
+        now += google_forms.INTERVAL_SECONDS
+        cached = (await client.get("/api/data-status")).json()
+        assert cached["sync"]["state"] == "error"
+        assert cached["data_version"] == status["data_version"]
+
+        offline = False
+        now += google_forms.INTERVAL_SECONDS
+        unchanged = (await client.get("/api/data-status")).json()
+        assert unchanged["sync"]["state"] == "connected"
+        assert unchanged["data_version"] == status["data_version"]
+
+        new_id = "СТ-006"
+        later_id = "СТ-007"
+        submissions.extend([
+            {**answer, surveys.INTERN_ID: "CT-006", surveys.MONTH: "1-й месяц", surveys.SATISFACTION: "2"},
+            {**answer, surveys.INTERN_ID: later_id, surveys.MONTH: "Месяц 1", surveys.SATISFACTION: "3"},
+            {**answer, surveys.INTERN_ID: new_id, surveys.MONTH: "1", surveys.SATISFACTION: "1"},
+            {**answer, surveys.INTERN_ID: new_id, surveys.MONTH: "Месяц 7", surveys.SATISFACTION: "5"},
+        ])
+        now += google_forms.INTERVAL_SECONDS
+        expanded = (await client.get("/api/overview")).json()
+        assert expanded["intern_count"] == 7
+        assert expanded["recent_intern_ids"][:2] == [later_id, new_id]
+        assert expanded["intern_responses"] == 32
+        assert expanded["mentor_responses"] == 30
+        assert expanded["metrics"][0]["participants"] == 7
+        assert expanded["metrics"][0]["value"] == pytest.approx((fresh_overview["metrics"][0]["value"] * 5 + 1 + 3) / 7)
+        expanded_satisfaction = next(chart for chart in expanded["charts"] if chart["id"] == "satisfaction")
+        assert [point["responses"] for point in expanded_satisfaction["series"][0]["points"]] == [7, 5, 5, 5, 5, 5]
+        new_profile = (await client.get(f"/api/interns/{new_id}")).json()
+        assert new_profile["metrics"][0]["value"] == 1
+        assert new_profile["metrics"][0]["month"] == 1
+        assert [row["intern_submitted"] for row in new_profile["coverage"]] == [True, False, False, False, False, False]
+        assert new_profile["comments"] == []
+        assert (await client.get(profile_url)).json()["intern_comments"] == fresh_profile["intern_comments"]
+
+    execute(scenario)
 
 
 def test_forms_can_fill_missing_checkpoint_without_modifying_history():

@@ -24,6 +24,7 @@ class Metric(BaseModel):
     source: str
     month: int | None = None
     change: Change | None = None
+    participants: int | None = None
 
 
 class Series(BaseModel):
@@ -74,6 +75,7 @@ class SyncStatus(BaseModel):
     state: Literal["history", "connected", "error"] = "history"
     checked_at: datetime | None = None
     detail: str | None = None
+    sources: list[Literal["interns", "mentors"]] = Field(default_factory=list)
 
 
 class DashboardData(BaseModel):
@@ -92,6 +94,7 @@ class Overview(DashboardData):
     intern_responses: int
     mentor_responses: int
     interns: list[InternSummary]
+    recent_intern_ids: list[str]
 
 
 class Profile(DashboardData):

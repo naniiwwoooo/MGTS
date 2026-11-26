@@ -16,8 +16,8 @@ def example_analysis(prompt: str) -> str:
 
 
 if __name__ == "__main__":
-    for name in ("MGTS_GOOGLE_INTERN_SHEET_ID", "MGTS_GOOGLE_MENTOR_SHEET_ID"):
-        os.environ.pop(name, None)
+    os.environ["MGTS_GOOGLE_INTERN_SHEET_ID"] = ""
+    os.environ.pop("MGTS_GOOGLE_MENTOR_SHEET_ID", None)
     llm.llm_available = lambda: True
     llm._call_model = example_analysis
     with socket.socket() as listener:

@@ -40,7 +40,10 @@ class SurveyDataError(ValueError):
     """Ошибку можно показать пользователю без содержимого строки."""
 
 
-def normalize(data: pd.DataFrame, origin: str, *, mentor: bool, live: bool = False) -> pd.DataFrame:
+def normalize(
+    data: pd.DataFrame, origin: str, *, mentor: bool, live: bool = False,
+    rejected_rows: set[int] | None = None,
+) -> pd.DataFrame:
     columns = MENTOR_COLUMNS if mentor else INTERN_COLUMNS
     fields = [INTERN_ID, DEPARTMENT, *([MENTOR_ID] if mentor else [])]
     metrics = MENTOR_METRICS if mentor else INTERN_METRICS
@@ -53,21 +56,31 @@ def normalize(data: pd.DataFrame, origin: str, *, mentor: bool, live: bool = Fal
     entries = entries.loc[:, columns].copy().replace(r"^\s*$", pd.NA, regex=True).dropna(how="all")
 
     def invalid(mask: pd.Series, message: str) -> None:
-        if mask.any():
-            raise SurveyDataError(f"{origin}, строка {mask[mask].index[0] + 2}. {message}")
+        bad_rows = mask[mask].index
+        if rejected_rows is not None:
+            rejected_rows.update(bad_rows)
+        elif len(bad_rows):
+            raise SurveyDataError(f"{origin}, строка {bad_rows[0] + 2}. {message}")
 
     for field in fields:
         entries[field] = entries[field].astype("string").str.strip()
         invalid(entries[field].isna(), f"Заполните колонку «{field}».")
     invalid(~entries[INTERN_ID].str.fullmatch(r"[\w-]+"), "ID стажера должен состоять из букв, цифр, дефиса или подчёркивания.")
     raw_month = entries[MONTH].astype("string").str.strip().str.replace(r"(?i)^месяц\s+", "", regex=True)
+    if live:
+        raw_month = raw_month.str.replace(r"(?i)(?:[-–]?(?:й|ый))?\s+месяц$", "", regex=True)
     months = pd.to_numeric(raw_month, errors="coerce")
     invalid(~months.isin(range(1, 7)), "Укажите контрольный месяц от 1 до 6.")
-    entries[MONTH] = months.astype(int)
+    entries[MONTH] = months
     for field in metrics:
         values = pd.to_numeric(entries[field], errors="coerce")
         invalid(entries[field].notna() & ~values.isin(range(1, 6)), f"«{field}» допускает целые оценки от 1 до 5.")
         entries[field] = values.astype(float)
+    if rejected_rows is not None:
+        entries = entries.drop(index=list(rejected_rows), errors="ignore")
+    entries[MONTH] = entries[MONTH].astype(int)
+    if rejected_rows is not None:
+        return entries
     keys = record_keys(mentor)
     if live:
         entries = entries.drop_duplicates(keys, keep="last")

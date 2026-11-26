@@ -273,24 +273,42 @@ test("История показывает все контрольные меся
   });
 });
 
-test("Дашборд перечитывает данные после смены версии без перезапуска страницы", async (context) => {
+test("Дашборд автоматически показывает новые ответы стажёров", async (context) => {
   await withPage(context, { viewport: { width: 1440, height: 900 } }, async (page) => {
+    await page.clock.install();
     await page.goto(origin);
     await page.getByRole("heading", { name: "Обзор программы" }).waitFor();
     const original = await page.request.get(origin + "/api/overview").then(response => response.json());
-    const next = { ...original, data_version: "updated-test" };
+    const newcomer = { ...original.interns[0], id: "СТ-006", signals: [] };
+    const next = {
+      ...original, data_version: "updated-test", intern_count: original.intern_count + 1,
+      intern_responses: original.intern_responses + 1, interns: [...original.interns, newcomer],
+      recent_intern_ids: [newcomer.id, ...original.recent_intern_ids.slice(0, 4)],
+    };
     next.metrics[0].change.latest.value = 3.2;
     next.metrics[0].value = 3.2;
-    next.sync = { state: "connected" };
+    next.sync = { state: "connected", sources: ["interns"] };
     await page.route("**/api/data-status", route => route.fulfill({
       json: { data_version: next.data_version, sync: next.sync },
     }));
     await page.route("**/api/overview", route => route.fulfill({ json: next }));
     await page.route("**/api/analysis/overview?*", route => route.fulfill({ json: { status: "unavailable" } }));
     await page.evaluate(() => { window.dashboardPageSentinel = true; });
-    await page.getByRole("button", { name: "Обновить данные" }).click();
-    await page.getByText("История Excel и ответы Google Forms").waitFor();
+    await page.clock.fastForward(15_000);
+    await page.getByText("Ответы стажёров из Google Forms и Excel · Оценки наставников из Excel").waitFor();
     await page.locator(".metric-value").first().getByText("3,2", { exact: false }).waitFor();
+    await page.getByText(/Стажёры: 6 \(31 ответ\)/).waitFor();
+    const sidebar = page.getByRole("navigation", { name: "Разделы" });
+    assert.equal(await sidebar.getByRole("link", { name: /^СТ-/ }).count(), 5);
+    await sidebar.getByRole("link", { name: "СТ-006", exact: true }).waitFor();
+    const trigger = sidebar.getByRole("button", { name: "Все стажёры (6)" });
+    assert.equal(await trigger.getAttribute("aria-expanded"), "false");
+    await trigger.click();
+    assert.equal(await sidebar.getByRole("link", { name: /^СТ-/ }).count(), 6);
+    await sidebar.getByRole("link", { name: "СТ-001", exact: true }).waitFor();
+    await sidebar.getByRole("button", { name: "Свернуть историю" }).click();
+    assert.equal(await sidebar.getByRole("link", { name: /^СТ-/ }).count(), 5);
+    assert.equal(await page.locator("#mobile-intern option").count(), 7);
     assert.equal(await page.evaluate(() => window.dashboardPageSentinel), true);
   });
 });

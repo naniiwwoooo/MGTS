@@ -11,6 +11,7 @@ let routeController;
 let plotlyLoading;
 let activePath;
 let navIds = [];
+let historyExpanded = false;
 
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -71,12 +72,35 @@ function markNavigation(id) {
   document.querySelector(".mobile-navigation .overview-link").hidden = !id;
 }
 
-function renderNavigation(interns, id) {
+function renderNavigation(interns, recentIds, id) {
   navIds = interns.map((intern) => intern.id);
+  const recent = recentIds.filter((internId) => navIds.includes(internId));
+  const older = navIds.filter((internId) => !recent.includes(internId));
   directoryNav.replaceChildren(element("p", "Стажёры", "sidebar-label"));
   mobileIntern.replaceChildren(new Option("Выберите профиль", ""));
-  for (const internId of navIds) {
-    directoryNav.append(link(internId, internPath(internId), "nav-link"));
+  const profileLink = (internId) => link(internId, internPath(internId), "nav-link");
+  directoryNav.append(...recent.map(profileLink));
+  if (older.length) {
+    const toggle = element("button", undefined, "nav-history-toggle");
+    toggle.type = "button";
+    const history = element("div");
+    history.id = "intern-navigation-history";
+    history.append(...older.map(profileLink));
+    toggle.setAttribute("aria-controls", history.id);
+    historyExpanded ||= older.includes(id);
+    function showHistory() {
+      history.hidden = !historyExpanded;
+      toggle.setAttribute("aria-expanded", String(historyExpanded));
+      toggle.textContent = historyExpanded ? "Свернуть историю" : "Все стажёры (" + navIds.length + ")";
+    }
+    toggle.addEventListener("click", () => {
+      historyExpanded = !historyExpanded;
+      showHistory();
+    });
+    showHistory();
+    directoryNav.append(toggle, history);
+  }
+  for (const internId of [...recent, ...older]) {
     mobileIntern.add(new Option(internId, internId));
   }
   mobileIntern.disabled = navIds.length === 0;
@@ -101,13 +125,17 @@ function renderMetrics(page, metrics, isProfile) {
   for (const metric of metrics) {
     const card = element("article", undefined, "metric");
     const latest = metric.change?.latest;
-    const measured = latest?.value ?? null;
+    const measured = metric.value;
+    const participantAverage = metric.participants != null;
     const value = element("div", measured === null ? "—" : format.format(measured), "metric-value");
-    if (latest) value.append(element("small", " / " + metric.scale));
-    const subtitle = latest ? metric.source + " · мес. " + latest.month + " · " + responseLabel(latest.responses)
+    if (measured !== null) value.append(element("small", " / " + metric.scale));
+    const participants = { one: "стажёр", few: "стажёра", many: "стажёров" };
+    const subtitle = participantAverage && metric.participants
+      ? "По последней оценке каждого · " + metric.participants + " " + participants[plurals.select(metric.participants)]
+      : latest ? metric.source + " · мес. " + latest.month + " · " + responseLabel(latest.responses)
       : metric.source + " · нет оценки";
     const quality = rating(measured, metric.scale);
-    if (metric.change && metric.change.first.month !== latest.month) {
+    if (!participantAverage && metric.change && metric.change.first.month !== latest.month) {
       const delta = Number((latest.value - metric.change.first.value).toFixed(2));
       const badge = element("small", (delta > 0 ? "+" : "") + format.format(delta), "metric-delta");
       badge.dataset.direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
@@ -116,7 +144,8 @@ function renderMetrics(page, metrics, isProfile) {
     }
     if (quality) card.dataset.tone = quality.tone;
     card.append(element("h2", metric.label), value, element("p", subtitle));
-    card.append(element("p", changeLabel(metric.change), "metric-change"));
+    card.append(element("p", (participantAverage && metric.change?.first.month !== latest?.month ? "По месяцам: " : "") +
+      changeLabel(metric.change), "metric-change"));
     grid.append(card);
   }
 }
@@ -603,7 +632,9 @@ function watchUpdates(page, data, signal) {
   function describe(sync) {
     status.textContent = {
       history: "Источник: исторические анкеты Excel",
-      connected: "История Excel и ответы Google Forms",
+      connected: sync.sources?.length === 1 && sync.sources[0] === "interns"
+        ? "Ответы стажёров из Google Forms и Excel · Оценки наставников из Excel"
+        : "История Excel и ответы Google Forms",
       error: "Google Forms временно недоступен. Показаны последние доступные данные.",
     }[sync.state];
     if (sync.detail) status.textContent += " " + sync.detail;
@@ -622,7 +653,7 @@ function watchUpdates(page, data, signal) {
         else renderRoute(manual);
       } else {
         describe(update.sync);
-        if (manual && update.sync.state !== "error") status.textContent += " · актуально";
+        if (manual && update.sync.state !== "error" && !update.sync.detail) status.textContent += " · актуально";
       }
     } catch {
       if (!signal.aborted) status.textContent = "Не удалось проверить обновления. Можно повторить.";
@@ -632,7 +663,7 @@ function watchUpdates(page, data, signal) {
     }
   }
   refresh.addEventListener("click", () => check(true));
-  const timer = setInterval(check, 30_000);
+  const timer = setInterval(check, 15_000);
   signal.addEventListener("abort", () => clearInterval(timer), { once: true });
 }
 
@@ -657,7 +688,7 @@ async function renderRoute(focus = false) {
     if (profile && overview.data_version !== profile.data_version) {
       throw new Error("Опросы обновились во время загрузки. Попробуйте ещё раз.");
     }
-    renderNavigation(overview.interns, id);
+    renderNavigation(overview.interns, overview.recent_intern_ids, id);
     const page = template.content.cloneNode(true).firstElementChild;
     const title = id ? "Стажёр " + id : "Обзор программы";
     document.title = title + " · МГТС";
@@ -694,7 +725,7 @@ async function renderRoute(focus = false) {
     main.replaceChildren(panel);
     if (focus) main.focus({ preventScroll: true });
     overviewRequest?.then((overview) => {
-      if (!signal.aborted) renderNavigation(overview.interns, id);
+      if (!signal.aborted) renderNavigation(overview.interns, overview.recent_intern_ids, id);
     }).catch(() => {});
   }
 }
